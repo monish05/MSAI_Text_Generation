@@ -2,6 +2,7 @@
 /checkpoints/
 /tokenizer/
 /logs/
+/slurm/
 .venv/
 __pycache__/
 *.pyc

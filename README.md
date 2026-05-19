@@ -35,7 +35,7 @@ Produces `data/processed/*_{train,val}.jsonl`, `tokenizer/tokenizer.json`, `kios
 
 ## Train on Quest
 
-1. Set `#SBATCH --chdir` in [slurm/quest_train_msai.sh](slurm/quest_train_msai.sh).
+1. Keep `slurm/quest_train_msai.sh` locally (gitignored — set your account, paths, email).
 2. Sync repo + `data/processed/` + `tokenizer/`.
 3. Submit:
 
@@ -68,7 +68,7 @@ scripts/
   preprocess.py         # full data pipeline
   train.py              # training entrypoint
   eval.py / generate.py
-slurm/quest_train_msai.sh
+slurm/                  # local only (gitignored)
 ```
 
 ## Phase 2

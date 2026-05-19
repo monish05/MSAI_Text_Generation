@@ -49,7 +49,7 @@ def main() -> None:
     if not args.skip_tokenizer:
         train_tokenizer(cfg)
 
-    print("Done. On Quest: sbatch slurm/quest_train_msai.sh")
+    print("Done. On Quest: sbatch slurm/quest_train_msai.sh  (slurm/ is gitignored)")
 
 
 if __name__ == "__main__":
