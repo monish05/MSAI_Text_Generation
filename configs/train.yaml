@@ -1,0 +1,50 @@
+# Paths (relative to repo root)
+paths:
+  data_raw: data
+  kiosk_archive: ../kiosk/Archive
+
+mix_weights:
+  xlam: 0.35
+  glaive: 0.25
+  toolbench: 0.15
+  alpaca: 0.10
+  kiosk: 0.25
+
+model:
+  d_model: 256
+  n_heads: 4
+  n_layers: 6
+  d_ff: 1024
+  max_seq_len: 512
+  dropout: 0.1
+
+tokenizer:
+  vocab_size: 12000
+  min_frequency: 2
+
+training:
+  num_epochs: 15
+  samples_per_epoch: 0          # 0 = max(100k, sum of train shard lines)
+  val_samples: 5000
+  batch_size: 128
+  num_workers: 4
+  lr: 6.0e-4
+  weight_decay: 0.01
+  warmup_steps: 1000
+  grad_clip: 1.0
+  eval_every_epochs: 1
+  log_every: 50
+  device: cuda
+  seed: 42
+
+synthetic:
+  n_total: 3000
+  n_holdout: 200
+  val_ratio: 0.1
+  multi_turn_ratio: 0.25
+
+converter_limits:
+  xlam: 0
+  glaive: 0
+  toolbench: 50000
+  alpaca: 52000

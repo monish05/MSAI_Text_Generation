@@ -1,0 +1,155 @@
+[
+  {
+    "name": "lookup_faculty_topic",
+    "description": "List faculty members whose research interests mention a given topic or area.",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "topic": {
+          "type": "string",
+          "description": "Research topic or keyword (e.g., 'AI', 'robotics')."
+        }
+      },
+      "required": [
+        "topic"
+      ]
+    }
+  },
+  {
+    "name": "lookup_center",
+    "description": "Query research centers - either find centers a faculty member leads, or find who leads a center. Provide either a faculty name OR a center name.",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "faculty": {
+          "type": "string",
+          "description": "Faculty name to find their centers (e.g., 'Kristian Hammond')."
+        },
+        "center": {
+          "type": "string",
+          "description": "Center name to find its leadership (e.g., 'Center for Deep Learning')."
+        },
+        "use_last_subject": {
+          "type": "boolean",
+          "description": "If true, reuse the last referenced person/center from conversation.",
+          "default": false
+        }
+      },
+      "required": []
+    }
+  },
+  {
+    "name": "lookup_advisorship",
+    "description": "Query advisor relationships. For a student: returns their faculty advisors. For faculty: returns their advisees (students they advise).",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string",
+          "description": "Name of student or faculty member (e.g., 'Khalil Anderson' or 'Marcelo Worsley')."
+        },
+        "use_last_subject": {
+          "type": "boolean",
+          "description": "If true, reuse the last referenced person from conversation.",
+          "default": false
+        }
+      },
+      "required": []
+    }
+  },
+  {
+    "name": "lookup_staff_support",
+    "description": "Recommend the staff contact responsible for a student-facing need (e.g., academic advising, reimbursements, travel, events).",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "topic": {
+          "type": "string",
+          "description": "Administrative need or keyword (e.g., 'reimbursements', 'travel', 'student group events')."
+        }
+      },
+      "required": [
+        "topic"
+      ]
+    }
+  },
+  {
+    "name": "lookup_office_hours",
+    "description": "Retrieve office hours: (1) by course - all slots for a class (e.g., 'CS 336'); (2) by course + day - slots for a class on a specific day (e.g., 'CS 336 on Wednesday'); (3) by person - all slots for a faculty/TA (e.g., 'Prof Hammond'). Provide course OR person; day is optional.",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "class_name": {
+          "type": "string",
+          "description": "Course or class name (e.g., 'CS 211', 'CS 336')."
+        },
+        "person": {
+          "type": "string",
+          "description": "Person name for their office hours (faculty or TA, e.g., 'Anjali', 'Mia George', 'Prof Hammond')."
+        },
+        "day": {
+          "type": "string",
+          "description": "Optional day filter for course or person (e.g., 'Monday', 'Friday', 'W', 'today', 'tomorrow')."
+        },
+        "use_last_subject": {
+          "type": "boolean",
+          "description": "If true, reuse the previously referenced class or person from conversation context.",
+          "default": false
+        }
+      },
+      "required": []
+    }
+  },
+  {
+    "name": "lookup_person",
+    "description": "Search faculty, staff, and students for a person and return merged profile facts. Returns a `person_type` metadata field indicating the detected role (primary and all matches).",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string",
+          "description": "Person's full name (e.g., 'Caleb Wang')."
+        },
+        "use_last_subject": {
+          "type": "boolean",
+          "description": "Reuse last referenced person if true.",
+          "default": false
+        }
+      },
+      "required": []
+    }
+  },
+  {
+    "name": "lookup_location",
+    "description": "Find the location for a person (faculty office, staff office, or student seating). Works for faculty, staff, and students.",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string",
+          "description": "Full name of the person (faculty, staff, or student)."
+        },
+        "use_last_subject": {
+          "type": "boolean",
+          "description": "If true, reuse the last person mentioned in the conversation.",
+          "default": false
+        }
+      },
+      "required": []
+    }
+  },
+  {
+    "name": "list_events",
+    "description": "List upcoming Northwestern CS events, optionally filtered by keyword.",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "keyword": {
+          "type": "string",
+          "description": "Optional keyword to filter events (e.g., 'AI', 'seminar')."
+        }
+      },
+      "required": []
+    }
+  }
+]

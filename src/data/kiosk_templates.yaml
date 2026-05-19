@@ -1,0 +1,81 @@
+# Question templates per kiosk action. Slots: {name}, {last_name}, {topic}, {class_name}, {day}, {faculty}, {center}, {keyword}
+
+nicknames:
+  "Prof Hammond": "Kristian Hammond"
+  "Professor Hammond": "Kristian Hammond"
+  "Hammond": "Kristian Hammond"
+  "Chris": "Kristian Hammond"
+
+lookup_person:
+  - "Tell me about {name}."
+  - "Who is {name}?"
+  - "What does {name} do in the CS department?"
+  - "Can you look up {name}?"
+  - "Find information on Professor {last_name}."
+  - "I'm looking for {name}."
+
+lookup_location:
+  - "Where is {name} located?"
+  - "What room is {name} in?"
+  - "Where can I find {name}?"
+  - "What's {name}'s office?"
+  - "Where is Professor {last_name}'s office?"
+
+lookup_office_hours:
+  - "What are the office hours for {class_name}?"
+  - "When is {class_name} office hours on {day}?"
+  - "Office hours for {person}?"
+  - "Does {person} have office hours on {day}?"
+  - "CS office hours for {class_name}?"
+  - "Any office hours for {class_name} today?"
+
+lookup_faculty_topic:
+  - "Which faculty work on {topic}?"
+  - "Who researches {topic}?"
+  - "Find professors interested in {topic}."
+  - "Faculty working in {topic}?"
+
+lookup_center:
+  - "What centers does {faculty} lead?"
+  - "Who leads the {center}?"
+  - "Tell me about the {center}."
+
+lookup_advisorship:
+  - "Who advises {name}?"
+  - "Who are {name}'s advisees?"
+  - "What students does {name} advise?"
+
+lookup_staff_support:
+  - "Who do I contact about {topic}?"
+  - "I need help with {topic}."
+  - "Staff contact for {topic}?"
+
+list_events:
+  - "What CS events are coming up?"
+  - "Any upcoming seminars?"
+  - "List events about {keyword}."
+  - "What's happening in the department?"
+
+noop:
+  - "What's the weather today?"
+  - "Order me a pizza."
+  - "Write me a Python sorting algorithm."
+  - "Who won the Super Bowl?"
+  - "Book a flight to New York."
+
+multi_turn:
+  - first_action: lookup_person
+    first_template: "Tell me about {name}."
+    followup: "Where is their office?"
+    follow_action: lookup_location
+    topic: professor
+  - first_action: lookup_person
+    first_template: "Who is {name}?"
+    followup: "What are their office hours?"
+    follow_action: lookup_office_hours
+    topic: professor
+  - first_action: lookup_office_hours
+    first_template: "What are office hours for {class_name}?"
+    followup: "Any other slots on Friday?"
+    follow_action: lookup_office_hours
+    topic: office_hours
