@@ -45,7 +45,15 @@ sbatch slurm/quest_train_msai.sh
 # overrides: EPOCHS=15 BATCH_SIZE=128 SAMPLES_PER_EPOCH=0 RUN_EVAL=1
 ```
 
-Epoch-based training with weighted resampling (`configs/train.yaml`). Outputs: `checkpoints/last.pt`, `best.pt`, `metrics.csv`.
+Epoch-based training with weighted resampling (`configs/train.yaml`). Outputs:
+
+| File | Description |
+|------|-------------|
+| `checkpoints/last.pt`, `best.pt` | Model weights |
+| `checkpoints/metrics.csv` | Per-epoch train/val loss, val token acc, holdout action acc |
+| `checkpoints/plots/curves.png` | Loss and accuracy curves (updated each epoch) |
+
+Holdout eval each epoch adds time (~200 generations). Set `holdout_eval_every_epochs: 0` in `configs/train.yaml` to skip during training and use `eval.py` once after.
 
 ## Inference
 

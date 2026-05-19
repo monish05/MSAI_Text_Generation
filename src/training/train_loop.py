@@ -4,14 +4,28 @@ from __future__ import annotations
 
 import csv
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, Tuple
 
 import torch
 from torch.utils.data import DataLoader
+from tokenizers import Tokenizer
 from tqdm import tqdm
 
 from src.model import DecoderOnlyTransformer
+from src.paths import PROCESSED
 from src.training.dataset import MixedDataset
+
+HOLDOUT_PATH = PROCESSED / "kiosk_holdout.jsonl"
+
+METRICS_COLUMNS = [
+    "epoch",
+    "train_loss",
+    "val_loss",
+    "val_token_acc",
+    "holdout_action_acc",
+    "holdout_json_valid",
+    "global_step",
+]
 
 
 def _resolve_device(name: str) -> torch.device:
@@ -33,6 +47,7 @@ def train(
     cfg: Dict[str, Any],
     device: torch.device,
     checkpoint_dir: Path,
+    tokenizer: Optional[Tokenizer] = None,
 ) -> None:
     tcfg = cfg.get("training", {})
     num_epochs = int(tcfg.get("num_epochs", 10))
@@ -41,6 +56,8 @@ def train(
     warmup_steps = int(tcfg.get("warmup_steps", 500))
     grad_clip = float(tcfg.get("grad_clip", 1.0))
     eval_every_epochs = int(tcfg.get("eval_every_epochs", 1))
+    holdout_eval_every_epochs = int(tcfg.get("holdout_eval_every_epochs", 1))
+    plot_every_epochs = int(tcfg.get("plot_every_epochs", 1))
     log_every = int(tcfg.get("log_every", 50))
 
     optimizer = torch.optim.AdamW(model.parameters(), lr=lr, weight_decay=weight_decay)
@@ -48,6 +65,7 @@ def train(
 
     checkpoint_dir.mkdir(parents=True, exist_ok=True)
     metrics_path = checkpoint_dir / "metrics.csv"
+    plots_dir = checkpoint_dir / "plots"
     _init_metrics_csv(metrics_path)
 
     best_val = float("inf")
@@ -88,10 +106,13 @@ def train(
 
         train_loss = epoch_loss_sum / max(epoch_batches, 1)
         val_loss: Optional[float] = None
+        val_token_acc: Optional[float] = None
+        holdout_action_acc: Optional[float] = None
+        holdout_json_valid: Optional[float] = None
 
         if val_loader and (epoch + 1) % eval_every_epochs == 0:
-            val_loss = _eval_loss(model, val_loader, device)
-            tqdm.write(f"epoch {epoch + 1} train_loss={train_loss:.4f} val_loss={val_loss:.4f}")
+            val_loss, val_token_acc = _eval_epoch_metrics(model, val_loader, device)
+            msg = f"epoch {epoch + 1} train_loss={train_loss:.4f} val_loss={val_loss:.4f} val_token_acc={val_token_acc:.4f}"
             if val_loss < best_val:
                 best_val = val_loss
                 _save_checkpoint(
@@ -103,8 +124,17 @@ def train(
                     train_loss=train_loss,
                     val_loss=val_loss,
                 )
+            tqdm.write(msg)
         else:
             tqdm.write(f"epoch {epoch + 1} train_loss={train_loss:.4f}")
+
+        if (
+            tokenizer is not None
+            and holdout_eval_every_epochs > 0
+            and (epoch + 1) % holdout_eval_every_epochs == 0
+            and HOLDOUT_PATH.exists()
+        ):
+            holdout_action_acc, holdout_json_valid = _run_holdout_eval(model, tokenizer, device, epoch + 1)
 
         _save_checkpoint(
             checkpoint_dir / "last.pt",
@@ -115,7 +145,21 @@ def train(
             train_loss=train_loss,
             val_loss=val_loss,
         )
-        _append_metrics(metrics_path, epoch + 1, train_loss, val_loss, global_step)
+        _append_metrics(
+            metrics_path,
+            epoch + 1,
+            train_loss,
+            val_loss,
+            val_token_acc,
+            holdout_action_acc,
+            holdout_json_valid,
+            global_step,
+        )
+
+        if plot_every_epochs > 0 and (epoch + 1) % plot_every_epochs == 0:
+            _save_training_curves(metrics_path, plots_dir)
+
+    _save_training_curves(metrics_path, plots_dir)
 
     if not (checkpoint_dir / "best.pt").exists():
         last = checkpoint_dir / "last.pt"
@@ -125,19 +169,59 @@ def train(
             shutil.copy(last, checkpoint_dir / "best.pt")
 
 
+def _run_holdout_eval(
+    model: DecoderOnlyTransformer,
+    tokenizer: Tokenizer,
+    device: torch.device,
+    epoch_num: int,
+) -> Tuple[Optional[float], Optional[float]]:
+    from src.training.holdout_eval import evaluate_holdout
+
+    holdout = evaluate_holdout(model, tokenizer, device)
+    action_acc = holdout["action_match_rate"]
+    json_valid = holdout["json_valid_rate"]
+    tqdm.write(f"epoch {epoch_num} holdout action_acc={action_acc:.4f} json_valid={json_valid:.4f}")
+    return action_acc, json_valid
+
+
+def _save_training_curves(metrics_path: Path, plots_dir: Path) -> None:
+    try:
+        from src.training.plots import plot_training_curves
+
+        if plot_path := plot_training_curves(metrics_path, plots_dir):
+            tqdm.write(f"saved curves -> {plot_path}")
+    except ImportError:
+        tqdm.write("plot skipped (install matplotlib on HPC: pip install matplotlib)")
+
+
 @torch.no_grad()
-def _eval_loss(model: DecoderOnlyTransformer, loader: DataLoader, device: torch.device) -> float:
+def _eval_epoch_metrics(
+    model: DecoderOnlyTransformer,
+    loader: DataLoader,
+    device: torch.device,
+) -> Tuple[float, float]:
     model.eval()
-    total = 0.0
-    n = 0
+    total_loss = 0.0
+    correct = 0
+    total_tokens = 0
+    n_batches = 0
+
     for batch in loader:
         input_ids = batch["input_ids"].to(device)
         labels = batch["labels"].to(device)
-        _, loss = model(input_ids, labels)
-        total += loss.item()
-        n += 1
+        logits, loss = model(input_ids, labels)
+        total_loss += loss.item()
+        n_batches += 1
+
+        pred = logits.argmax(dim=-1)
+        mask = labels != -100
+        correct += (pred[mask] == labels[mask]).sum().item()
+        total_tokens += mask.sum().item()
+
     model.train()
-    return total / max(n, 1)
+    avg_loss = total_loss / max(n_batches, 1)
+    token_acc = correct / max(total_tokens, 1)
+    return avg_loss, token_acc
 
 
 def _save_checkpoint(
@@ -165,10 +249,8 @@ def _save_checkpoint(
 
 
 def _init_metrics_csv(path: Path) -> None:
-    if not path.exists():
-        with open(path, "w", newline="", encoding="utf-8") as f:
-            writer = csv.writer(f)
-            writer.writerow(["epoch", "train_loss", "val_loss", "global_step"])
+    with open(path, "w", newline="", encoding="utf-8") as f:
+        csv.writer(f).writerow(METRICS_COLUMNS)
 
 
 def _append_metrics(
@@ -176,8 +258,20 @@ def _append_metrics(
     epoch: int,
     train_loss: float,
     val_loss: Optional[float],
+    val_token_acc: Optional[float],
+    holdout_action_acc: Optional[float],
+    holdout_json_valid: Optional[float],
     global_step: int,
 ) -> None:
     with open(path, "a", newline="", encoding="utf-8") as f:
-        writer = csv.writer(f)
-        writer.writerow([epoch, train_loss, val_loss if val_loss is not None else "", global_step])
+        csv.writer(f).writerow(
+            [
+                epoch,
+                train_loss,
+                val_loss if val_loss is not None else "",
+                val_token_acc if val_token_acc is not None else "",
+                holdout_action_acc if holdout_action_acc is not None else "",
+                holdout_json_valid if holdout_json_valid is not None else "",
+                global_step,
+            ]
+        )

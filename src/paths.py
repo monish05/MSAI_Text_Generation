@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import sys
 from pathlib import Path
 from typing import Dict
 
@@ -13,13 +12,6 @@ KIOSK_ROOT = ROOT.parent / "kiosk"
 PROCESSED = ROOT / "data" / "processed"
 CONFIG_PATH = ROOT / "configs" / "train.yaml"
 TRAIN_SHARDS = ("xlam", "glaive", "toolbench", "alpaca", "kiosk")
-
-
-def setup_imports() -> None:
-    for p in (ROOT, SRC, SCRIPTS):
-        s = str(p)
-        if s not in sys.path:
-            sys.path.insert(0, s)
 
 
 def load_config() -> dict:

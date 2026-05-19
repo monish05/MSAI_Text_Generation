@@ -80,7 +80,16 @@ def main() -> None:
         f"device={device} epochs={num_epochs} samples/epoch={samples_per_epoch} "
         f"steps/epoch={math.ceil(samples_per_epoch / batch_size)} batch={batch_size} vocab={mcfg.vocab_size}"
     )
-    train(DecoderOnlyTransformer(mcfg), train_ds, train_loader, val_loader, cfg=cfg, device=device, checkpoint_dir=ROOT / "checkpoints")
+    train(
+        DecoderOnlyTransformer(mcfg),
+        train_ds,
+        train_loader,
+        val_loader,
+        cfg=cfg,
+        device=device,
+        checkpoint_dir=ROOT / "checkpoints",
+        tokenizer=tokenizer,
+    )
 
 
 if __name__ == "__main__":
