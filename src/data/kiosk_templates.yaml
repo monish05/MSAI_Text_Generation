@@ -1,10 +1,26 @@
-# Question templates per kiosk action. Slots: {name}, {last_name}, {topic}, {class_name}, {day}, {faculty}, {center}, {keyword}
+# Kiosk synthetic question bank. Slots: {name} {last_name} {topic} {class_name} {day} {person} {faculty} {center} {keyword}
+
+prefixes:
+  - ""
+  - "Hi, "
+  - "Quick question: "
+  - "Hey kiosk — "
+  - "I'm a student and "
+  - "Could you help? "
+  - "For the CS kiosk: "
+  - "Sorry, "
+  - "Real quick — "
+  - "I'm lost — "
+  - "Before my advising meeting, "
+  - "My friend said to ask: "
+  - "Urgent-ish: "
 
 nicknames:
   "Prof Hammond": "Kristian Hammond"
   "Professor Hammond": "Kristian Hammond"
   "Hammond": "Kristian Hammond"
   "Chris": "Kristian Hammond"
+  "Prof. Hammond": "Kristian Hammond"
 
 lookup_person:
   - "Tell me about {name}."
@@ -13,6 +29,17 @@ lookup_person:
   - "Can you look up {name}?"
   - "Find information on Professor {last_name}."
   - "I'm looking for {name}."
+  - "Do we have anyone named {name} in the department?"
+  - "Give me a quick bio for {name}."
+  - "What role does {name} have here?"
+  - "I need background on {name} before my meeting."
+  - "Is {name} faculty or staff?"
+  - "Who's {name} in CS?"
+  - "Lookup {name} for me."
+  - "Summarize what you know about {name}."
+  - "I'm trying to find {name}'s profile."
+  - "Got a minute? Who is {name}?"
+  - "I'm new here — can you tell me about {name}?"
 
 lookup_location:
   - "Where is {name} located?"
@@ -20,6 +47,17 @@ lookup_location:
   - "Where can I find {name}?"
   - "What's {name}'s office?"
   - "Where is Professor {last_name}'s office?"
+  - "Which building is {name} in?"
+  - "Office location for {name}?"
+  - "I need directions to {name}'s office."
+  - "Is {name} in Tech or Mudd?"
+  - "Where do I go to see {name}?"
+  - "Room number for {name}?"
+  - "What's the office for Prof {last_name}?"
+  - "Help me find {name} on campus."
+  - "Where's {name} based?"
+  - "Mudd or Tech for {name}?"
+  - "I have a meeting with {name} — which room?"
 
 lookup_office_hours:
   - "What are the office hours for {class_name}?"
@@ -28,33 +66,72 @@ lookup_office_hours:
   - "Does {person} have office hours on {day}?"
   - "CS office hours for {class_name}?"
   - "Any office hours for {class_name} today?"
+  - "When can I drop by {person}'s office hours?"
+  - "OH for {class_name} this week?"
+  - "Is there a {day} slot for {class_name}?"
+  - "TA hours for {class_name}?"
+  - "When does {person} hold hours?"
+  - "I'm looking for {class_name} office hour times."
+  - "Schedule for {class_name} OH?"
+  - "Does {person} have hours on {day}?"
+  - "When's the next OH for {class_name}?"
+  - "I missed lecture — when can I see the TA for {class_name}?"
 
 lookup_faculty_topic:
   - "Which faculty work on {topic}?"
   - "Who researches {topic}?"
   - "Find professors interested in {topic}."
   - "Faculty working in {topic}?"
+  - "Who should I talk to about {topic}?"
+  - "Any faculty in {topic} I can email?"
+  - "List researchers in {topic}."
+  - "I'm interested in {topic} — who fits?"
+  - "Professors doing {topic} research?"
+  - "Who covers {topic} in the department?"
+  - "I'm applying to work with someone in {topic} — who should I email?"
 
 lookup_center:
   - "What centers does {faculty} lead?"
   - "Who leads the {center}?"
   - "Tell me about the {center}."
+  - "Which faculty run {center}?"
+  - "Who directs {center}?"
+  - "Is {faculty} affiliated with any centers?"
+  - "Leadership of {center}?"
+  - "What is {center} and who runs it?"
+  - "Center info for {center}."
+  - "Does {faculty} head a research center?"
 
 lookup_advisorship:
   - "Who advises {name}?"
   - "Who are {name}'s advisees?"
   - "What students does {name} advise?"
+  - "Advising relationship for {name}?"
+  - "Is {name} a faculty advisor?"
+  - "List advisees of {name}."
+  - "Who is {name}'s PhD advisor?"
+  - "Grad students under {name}?"
 
 lookup_staff_support:
   - "Who do I contact about {topic}?"
   - "I need help with {topic}."
   - "Staff contact for {topic}?"
+  - "Who handles {topic} for students?"
+  - "Department contact for {topic}?"
+  - "I'm confused about {topic} — who can help?"
+  - "Point me to staff for {topic}."
+  - "Administrative help with {topic}?"
 
 list_events:
   - "What CS events are coming up?"
   - "Any upcoming seminars?"
   - "List events about {keyword}."
   - "What's happening in the department?"
+  - "Seminars this week?"
+  - "Any talks on {keyword}?"
+  - "Upcoming PhD defenses?"
+  - "Department calendar for {keyword}?"
+  - "What events should I attend for {keyword}?"
 
 noop:
   - "What's the weather today?"
@@ -62,6 +139,82 @@ noop:
   - "Write me a Python sorting algorithm."
   - "Who won the Super Bowl?"
   - "Book a flight to New York."
+  - "What's 2+2?"
+  - "Translate this to French."
+  - "Recommend a restaurant downtown."
+  - "What's the capital of France?"
+  - "Set a timer for ten minutes."
+
+# One user message, one intended tool (may look like another tool)
+ambiguous:
+  - action: lookup_location
+    templates:
+      - "Is {name} in Mudd?"
+      - "Would I find Professor {last_name} in Tech?"
+      - "Is {name}'s office in the main building?"
+      - "Room for {name} — which hall?"
+  - action: lookup_person
+    templates:
+      - "Hammond — what does he teach?"
+      - "Tell me about Professor {last_name}."
+      - "I'm meeting {name} — who are they?"
+  - action: lookup_office_hours
+    templates:
+      - "When is {class_name} on {day}?"
+      - "{person} — any hours Friday?"
+  - action: lookup_faculty_topic
+    templates:
+      - "Who does {topic} here?"
+      - "Anyone in CS for {topic}?"
+  - action: lookup_center
+    templates:
+      - "Who runs {center}?"
+      - "Is {faculty} in charge of a center?"
+      - "Leadership at {center}?"
+  - action: lookup_advisorship
+    templates:
+      - "Who's {name}'s advisor?"
+      - "Students under {name}?"
+      - "Advising for {name} — who and where?"
+  - action: lookup_staff_support
+    templates:
+      - "Who do I email about {topic}?"
+      - "Reimbursements — who in the department?"
+      - "Travel paperwork contact?"
+  - action: list_events
+    templates:
+      - "Anything on {keyword} this month?"
+      - "Seminars about {keyword}?"
+  - action: noop
+    templates:
+      - "What's the weather in Evanston?"
+      - "Write my homework in Python."
+      - "Book me a hotel in Chicago."
+
+# One user message, multiple tools in one assistant JSON (actions array)
+multi_tool:
+  - user: "Tell me about {name} and where their office is."
+    actions: [lookup_person, lookup_location]
+  - user: "Who is {name}, and what are their office hours?"
+    actions: [lookup_person, lookup_office_hours]
+  - user: "Which faculty work on {topic}, and are there any {keyword} events?"
+    actions: [lookup_faculty_topic, list_events]
+  - user: "Who leads {center} and what is their title?"
+    actions: [lookup_center, lookup_person]
+  - user: "Where is {name}'s office, and who advises them?"
+    actions: [lookup_location, lookup_advisorship]
+  - user: "Who handles {topic}, and where is their office?"
+    actions: [lookup_staff_support, lookup_location]
+  - user: "What centers does {faculty} lead, and where are they located?"
+    actions: [lookup_center, lookup_location]
+  - user: "Office hours for {class_name} and who teaches it?"
+    actions: [lookup_office_hours, lookup_person]
+  - user: "Any {keyword} events, and which faculty work on {topic}?"
+    actions: [list_events, lookup_faculty_topic]
+  - user: "Who researches {topic}, and what is {name}'s title?"
+    actions: [lookup_faculty_topic, lookup_person]
+  - user: "Advising info for {name} and their office location."
+    actions: [lookup_advisorship, lookup_location]
 
 multi_turn:
   - first_action: lookup_person
@@ -79,3 +232,48 @@ multi_turn:
     followup: "Any other slots on Friday?"
     follow_action: lookup_office_hours
     topic: office_hours
+  - first_action: lookup_faculty_topic
+    first_template: "Who works on {topic}?"
+    followup: "Where is the first person's office?"
+    follow_action: lookup_location
+    topic: professor
+  - first_action: lookup_center
+    first_template: "Who leads {center}?"
+    followup: "Tell me more about that person."
+    follow_action: lookup_person
+    topic: professor
+  - first_action: lookup_person
+    first_template: "Lookup {name}."
+    followup: "Who advises them?"
+    follow_action: lookup_advisorship
+    topic: professor
+  - first_action: list_events
+    first_template: "Any seminars coming up?"
+    followup: "Who researches {keyword} in the department?"
+    follow_action: lookup_faculty_topic
+    topic: professor
+  - first_action: lookup_staff_support
+    first_template: "Who handles {topic}?"
+    followup: "Where is their office?"
+    follow_action: lookup_location
+    topic: professor
+  - first_action: lookup_location
+    first_template: "Where is {name}'s office?"
+    followup: "What else do you know about them?"
+    follow_action: lookup_person
+    topic: professor
+  - first_action: lookup_advisorship
+    first_template: "Who advises {name}?"
+    followup: "Where is the advisor's office?"
+    follow_action: lookup_location
+    topic: professor
+  - first_action: lookup_faculty_topic
+    first_template: "Faculty in {topic}?"
+    followup: "What are the first person's office hours?"
+    follow_action: lookup_office_hours
+    topic: professor
+  - first_action: lookup_staff_support
+    first_template: "Who should I talk to about {topic}?"
+    followup: "What is their role in the department?"
+    follow_action: lookup_person
+    topic: professor

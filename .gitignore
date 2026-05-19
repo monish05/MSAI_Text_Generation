@@ -4,7 +4,18 @@
 /logs/
 /slurm/
 .venv/
+
+# Python bytecode
 __pycache__/
-*.pyc
-*.pt
+**/__pycache__/
+*.py[cod]
+*$py.class
+*.pyo
+
+# macOS
 .DS_Store
+**/.DS_Store
+.AppleDouble
+.LSOverride
+
+*.pt

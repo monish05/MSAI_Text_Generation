@@ -45,21 +45,20 @@ def format_training_text(
 ) -> str:
     """Build a single training sequence."""
     parts = [SPECIAL_TOKENS["system"], system, SPECIAL_TOKENS["user"], user]
-    if extra_turns:
-        for turn in extra_turns:
-            parts.extend([SPECIAL_TOKENS["user"], turn["user"]])
-            if turn.get("assistant_tool"):
-                parts.extend([SPECIAL_TOKENS["assistant"], turn["assistant_tool"]])
-            if turn.get("tool_result"):
-                parts.extend([SPECIAL_TOKENS["tool"], turn["tool_result"]])
-            if turn.get("assistant_answer"):
-                parts.extend([SPECIAL_TOKENS["assistant"], turn["assistant_answer"]])
     if assistant_tool_json is not None:
         parts.extend([SPECIAL_TOKENS["assistant"], assistant_tool_json])
     if tool_result is not None:
         parts.extend([SPECIAL_TOKENS["tool"], tool_result])
     if assistant_answer is not None:
         parts.extend([SPECIAL_TOKENS["assistant"], assistant_answer])
+    for turn in extra_turns or []:
+        parts.extend([SPECIAL_TOKENS["user"], turn["user"]])
+        if turn.get("assistant_tool"):
+            parts.extend([SPECIAL_TOKENS["assistant"], turn["assistant_tool"]])
+        if turn.get("tool_result"):
+            parts.extend([SPECIAL_TOKENS["tool"], turn["tool_result"]])
+        if turn.get("assistant_answer"):
+            parts.extend([SPECIAL_TOKENS["assistant"], turn["assistant_answer"]])
     parts.append(SPECIAL_TOKENS["eos"])
     return "".join(parts)
 
