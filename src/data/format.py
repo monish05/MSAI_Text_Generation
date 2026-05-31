@@ -121,6 +121,28 @@ def encode_formatted_text(
     return ids
 
 
+def encode_generation_prompt(
+    system: str,
+    user: str,
+    tokenizer: Any,
+    *,
+    max_seq_len: int = 512,
+) -> List[int]:
+    """Encode system+user+<|assistant|>; always keep user and assistant marker in window."""
+    suffix_ids: List[int] = []
+    suffix_ids.extend(tokenizer.encode(SPECIAL_TOKENS["user"]).ids)
+    suffix_ids.extend(tokenizer.encode(user).ids)
+    suffix_ids.extend(tokenizer.encode(SPECIAL_TOKENS["assistant"]).ids)
+
+    budget = max(0, max_seq_len - len(suffix_ids))
+    system_ids: List[int] = []
+    system_ids.extend(tokenizer.encode(SPECIAL_TOKENS["system"]).ids)
+    system_ids.extend(tokenizer.encode(system).ids)
+    if len(system_ids) > budget:
+        system_ids = system_ids[-budget:]
+    return system_ids + suffix_ids
+
+
 def build_training_labels(
     text: str,
     tokenizer: Any,

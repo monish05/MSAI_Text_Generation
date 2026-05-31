@@ -24,6 +24,13 @@ def _extract_question(text: str) -> Optional[str]:
     return q.split("\nContext:")[0].strip()
 
 
+def _extract_system(text: str) -> Optional[str]:
+    """System JSON blob from a training row (matches what the model saw in shards)."""
+    if "<|system|>" not in text or "<|user|>" not in text:
+        return None
+    return text.split("<|system|>", 1)[1].split("<|user|>", 1)[0].strip()
+
+
 def evaluate_holdout(
     model: DecoderOnlyTransformer,
     tokenizer: Tokenizer,
@@ -49,14 +56,17 @@ def evaluate_holdout(
     with open(holdout_path, encoding="utf-8") as f:
         for line in f:
             row = json.loads(line)
-            q = _extract_question(row.get("text", ""))
+            text = row.get("text", "")
+            q = _extract_question(text)
             if not q:
                 continue
+            system_prompt = _extract_system(text)
             raw, parsed = generate_tool_call(
                 model,
                 tokenizer,
                 tool_schemas=schemas,
                 question=q,
+                system_prompt=system_prompt,
                 device=device,
                 max_new_tokens=max_new_tokens,
                 temperature=temperature,
@@ -81,6 +91,7 @@ def evaluate_holdout(
                             "expected_action": expected,
                             "got_action": got,
                             "raw_output": raw[:500],
+                            "used_row_system": system_prompt is not None,
                             "parsed": parsed,
                         }
                     )
@@ -94,9 +105,12 @@ def evaluate_holdout(
             for item in failures:
                 out.write(json.dumps(item, ensure_ascii=False) + "\n")
 
-    n = max(total, 1)
+    if total == 0:
+        raise ValueError(
+            f"No holdout rows with <|user|> in {holdout_path} — re-run preprocess / kiosk split."
+        )
     return {
         "total": total,
-        "json_valid_rate": json_valid / n,
-        "action_match_rate": action_match / n,
+        "json_valid_rate": json_valid / total,
+        "action_match_rate": action_match / total,
     }

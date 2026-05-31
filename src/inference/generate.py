@@ -13,6 +13,7 @@ from src.data.format import (
     SPECIAL_TOKENS,
     build_system_prompt,
     encode_formatted_text,
+    encode_generation_prompt,
     extract_json_from_text,
     parse_action_json,
 )
@@ -60,6 +61,17 @@ def _encode(tokenizer: Tokenizer, text: str, *, max_seq_len: int = 512) -> torch
     return torch.tensor([ids], dtype=torch.long)
 
 
+def _encode_tool_call_prompt(
+    tokenizer: Tokenizer,
+    *,
+    system: str,
+    user: str,
+    max_seq_len: int = 512,
+) -> torch.Tensor:
+    ids = encode_generation_prompt(system, user, tokenizer, max_seq_len=max_seq_len)
+    return torch.tensor([ids], dtype=torch.long)
+
+
 def _decode(tokenizer: Tokenizer, ids: torch.Tensor) -> str:
     return tokenizer.decode(ids[0].tolist())
 
@@ -71,10 +83,18 @@ def _generate_text(
     device: torch.device,
     max_new_tokens: int = 128,
     temperature: float = 0.0,
+    *,
+    system: Optional[str] = None,
+    user: Optional[str] = None,
 ) -> str:
     eos_id = tokenizer.token_to_id(SPECIAL_TOKENS["eos"])
     max_seq = getattr(model.cfg, "max_seq_len", 512)
-    input_ids = _encode(tokenizer, prompt, max_seq_len=max_seq).to(device)
+    if system is not None and user is not None:
+        input_ids = _encode_tool_call_prompt(
+            tokenizer, system=system, user=user, max_seq_len=max_seq
+        ).to(device)
+    else:
+        input_ids = _encode(tokenizer, prompt, max_seq_len=max_seq).to(device)
     out = model.generate(input_ids, max_new_tokens=max_new_tokens, eos_id=eos_id, temperature=temperature)
     new_ids = out[0, input_ids.size(1) :]
     return tokenizer.decode(new_ids.tolist())
@@ -88,11 +108,12 @@ def generate_tool_call(
     question: str,
     context: Optional[dict] = None,
     available_names: Optional[List[str]] = None,
+    system_prompt: Optional[str] = None,
     device: torch.device,
     max_new_tokens: int = 128,
     temperature: float = 0.0,
 ) -> Tuple[str, Optional[dict]]:
-    system = build_system_prompt(tool_schemas, available_names)
+    system = system_prompt or build_system_prompt(tool_schemas, available_names)
     user = question
     if context:
         user += f"\nContext: {json.dumps(context, ensure_ascii=False)}"
@@ -106,7 +127,14 @@ def generate_tool_call(
         ]
     )
     text = _generate_text(
-        model, tokenizer, prompt, device, max_new_tokens=max_new_tokens, temperature=temperature
+        model,
+        tokenizer,
+        prompt,
+        device,
+        max_new_tokens=max_new_tokens,
+        temperature=temperature,
+        system=system,
+        user=user,
     )
     parsed = parse_action_json(text)
     raw_json = extract_json_from_text(text) or text.strip()
