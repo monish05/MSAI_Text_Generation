@@ -48,20 +48,25 @@ def plot_training_curves(metrics_path: Path, out_dir: Path) -> Optional[Path]:
     out_dir.mkdir(parents=True, exist_ok=True)
     out_path = out_dir / "curves.png"
 
-    fig, axes = plt.subplots(1, 2, figsize=(10, 4))
+    fig, axes = plt.subplots(1, 2, figsize=(11, 4))
 
     ax = axes[0]
-    for key, label, style in (("train_loss", "train loss", "-"), ("val_loss", "val loss", "--")):
+    for key, label, style in (
+        ("train_loss", "train loss", "-"),
+        ("val_loss", "val loss", "--"),
+        ("kiosk_val_loss", "kiosk val loss", "-."),
+    ):
         xs, ys = _series(rows, key)
         if xs:
             ax.plot(xs, ys, style, label=label, linewidth=2)
     ax.set(xlabel="epoch", ylabel="loss", title="Loss")
-    ax.legend(loc="best")
+    ax.legend(loc="best", fontsize=8)
     ax.grid(True, alpha=0.3)
 
     ax = axes[1]
     for key, label, style in (
         ("val_token_acc", "val token acc", "-"),
+        ("kiosk_val_token_acc", "kiosk val acc", "-."),
         ("holdout_action_acc", "holdout action acc", "--"),
         ("holdout_json_valid", "holdout JSON valid", ":"),
     ):
@@ -70,7 +75,7 @@ def plot_training_curves(metrics_path: Path, out_dir: Path) -> Optional[Path]:
             ax.plot(xs, ys, style, label=label, linewidth=2)
     ax.set(xlabel="epoch", ylabel="accuracy", title="Accuracy")
     ax.set_ylim(0, 1.05)
-    ax.legend(loc="best")
+    ax.legend(loc="best", fontsize=8)
     ax.grid(True, alpha=0.3)
 
     fig.tight_layout()

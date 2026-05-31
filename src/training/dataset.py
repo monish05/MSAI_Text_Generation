@@ -10,7 +10,7 @@ from typing import Dict, List, Optional, Tuple
 import torch
 from torch.utils.data import Dataset
 
-from src.data.format import SPECIAL_TOKENS
+from src.data.format import SPECIAL_TOKENS, build_training_labels
 
 IndexEntry = Tuple[str, int]
 
@@ -93,9 +93,11 @@ class MixedDataset(Dataset):
 
     def __getitem__(self, index: int) -> Dict[str, torch.Tensor]:
         source, row_idx = self._epoch_indices[index]
-        ids = self.tokenizer.encode(self.rows[source][row_idx]["text"]).ids[: self.max_seq_len]
+        text = self.rows[source][row_idx]["text"]
+        ids, label_ids = build_training_labels(text, self.tokenizer, max_seq_len=self.max_seq_len)
         input_ids = torch.tensor(ids, dtype=torch.long)
-        return {"input_ids": input_ids, "labels": input_ids.clone()}
+        labels = torch.tensor(label_ids, dtype=torch.long)
+        return {"input_ids": input_ids, "labels": labels}
 
 
 def build_fixed_val_indices(shard_paths: Dict[str, Path], weights: Dict[str, float], n: int, seed: int) -> List[IndexEntry]:

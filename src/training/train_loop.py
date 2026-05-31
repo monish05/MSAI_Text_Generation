@@ -22,6 +22,8 @@ METRICS_COLUMNS = [
     "train_loss",
     "val_loss",
     "val_token_acc",
+    "kiosk_val_loss",
+    "kiosk_val_token_acc",
     "holdout_action_acc",
     "holdout_json_valid",
     "global_step",
@@ -48,6 +50,7 @@ def train(
     device: torch.device,
     checkpoint_dir: Path,
     tokenizer: Optional[Tokenizer] = None,
+    kiosk_val_loader: Optional[DataLoader] = None,
 ) -> None:
     tcfg = cfg.get("training", {})
     num_epochs = int(tcfg.get("num_epochs", 10))
@@ -107,6 +110,8 @@ def train(
         train_loss = epoch_loss_sum / max(epoch_batches, 1)
         val_loss: Optional[float] = None
         val_token_acc: Optional[float] = None
+        kiosk_val_loss: Optional[float] = None
+        kiosk_val_token_acc: Optional[float] = None
         holdout_action_acc: Optional[float] = None
         holdout_json_valid: Optional[float] = None
 
@@ -128,13 +133,22 @@ def train(
         else:
             tqdm.write(f"epoch {epoch + 1} train_loss={train_loss:.4f}")
 
+        if kiosk_val_loader and (epoch + 1) % eval_every_epochs == 0:
+            kiosk_val_loss, kiosk_val_token_acc = _eval_epoch_metrics(model, kiosk_val_loader, device)
+            tqdm.write(
+                f"epoch {epoch + 1} kiosk_val_loss={kiosk_val_loss:.4f} "
+                f"kiosk_val_token_acc={kiosk_val_token_acc:.4f}"
+            )
+
         if (
             tokenizer is not None
             and holdout_eval_every_epochs > 0
             and (epoch + 1) % holdout_eval_every_epochs == 0
             and HOLDOUT_PATH.exists()
         ):
-            holdout_action_acc, holdout_json_valid = _run_holdout_eval(model, tokenizer, device, epoch + 1)
+            holdout_action_acc, holdout_json_valid = _run_holdout_eval(
+                model, tokenizer, device, epoch + 1, checkpoint_dir
+            )
 
         _save_checkpoint(
             checkpoint_dir / "last.pt",
@@ -151,6 +165,8 @@ def train(
             train_loss,
             val_loss,
             val_token_acc,
+            kiosk_val_loss,
+            kiosk_val_token_acc,
             holdout_action_acc,
             holdout_json_valid,
             global_step,
@@ -174,10 +190,19 @@ def _run_holdout_eval(
     tokenizer: Tokenizer,
     device: torch.device,
     epoch_num: int,
+    checkpoint_dir: Path,
 ) -> Tuple[Optional[float], Optional[float]]:
     from src.training.holdout_eval import evaluate_holdout
 
-    holdout = evaluate_holdout(model, tokenizer, device)
+    holdout = evaluate_holdout(
+        model,
+        tokenizer,
+        device,
+        temperature=0.0,
+        max_new_tokens=128,
+        log_failures=checkpoint_dir / f"holdout_failures_epoch{epoch_num}.jsonl",
+        max_log_samples=5,
+    )
     action_acc = holdout["action_match_rate"]
     json_valid = holdout["json_valid_rate"]
     tqdm.write(f"epoch {epoch_num} holdout action_acc={action_acc:.4f} json_valid={json_valid:.4f}")
@@ -259,6 +284,8 @@ def _append_metrics(
     train_loss: float,
     val_loss: Optional[float],
     val_token_acc: Optional[float],
+    kiosk_val_loss: Optional[float],
+    kiosk_val_token_acc: Optional[float],
     holdout_action_acc: Optional[float],
     holdout_json_valid: Optional[float],
     global_step: int,
@@ -270,6 +297,8 @@ def _append_metrics(
                 train_loss,
                 val_loss if val_loss is not None else "",
                 val_token_acc if val_token_acc is not None else "",
+                kiosk_val_loss if kiosk_val_loss is not None else "",
+                kiosk_val_token_acc if kiosk_val_token_acc is not None else "",
                 holdout_action_acc if holdout_action_acc is not None else "",
                 holdout_json_valid if holdout_json_valid is not None else "",
                 global_step,

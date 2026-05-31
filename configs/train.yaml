@@ -10,7 +10,7 @@ mix_weights:
   glaive: 0.25
   toolbench: 0.15
   alpaca: 0.10
-  kiosk: 0.25
+  kiosk: 0.35
 
 model:
   d_model: 256
@@ -30,7 +30,7 @@ training:
   val_samples: 5000
   batch_size: 128
   num_workers: 4
-  lr: 6.0e-4
+  lr: 3.0e-4
   weight_decay: 0.01
   warmup_steps: 1000
   grad_clip: 1.0

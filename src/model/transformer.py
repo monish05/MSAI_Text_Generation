@@ -118,9 +118,13 @@ class DecoderOnlyTransformer(nn.Module):
         for _ in range(max_new_tokens):
             ctx = input_ids[:, -self.cfg.max_seq_len :]
             logits, _ = self(ctx)
-            logits = logits[:, -1, :] / max(temperature, 1e-6)
-            probs = F.softmax(logits, dim=-1)
-            next_id = torch.multinomial(probs, num_samples=1)
+            logits = logits[:, -1, :]
+            if temperature is not None and temperature <= 0:
+                next_id = logits.argmax(dim=-1, keepdim=True)
+            else:
+                logits = logits / max(temperature or 1.0, 1e-6)
+                probs = F.softmax(logits, dim=-1)
+                next_id = torch.multinomial(probs, num_samples=1)
             input_ids = torch.cat([input_ids, next_id], dim=1)
             if eos_id is not None and (next_id == eos_id).all():
                 break

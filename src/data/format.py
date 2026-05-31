@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import json
 import re
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Sequence, Tuple
+
+IGNORE_LABEL = -100
 
 SPECIAL_TOKENS = {
     "system": "<|system|>",
@@ -61,6 +63,69 @@ def format_training_text(
             parts.extend([SPECIAL_TOKENS["assistant"], turn["assistant_answer"]])
     parts.append(SPECIAL_TOKENS["eos"])
     return "".join(parts)
+
+
+def _assistant_content_spans(text: str) -> List[Tuple[int, int]]:
+    """Character spans to supervise: content after each <|assistant|> marker."""
+    marker = SPECIAL_TOKENS["assistant"]
+    boundaries = (
+        SPECIAL_TOKENS["user"],
+        SPECIAL_TOKENS["tool"],
+        SPECIAL_TOKENS["system"],
+        SPECIAL_TOKENS["eos"],
+    )
+    spans: List[Tuple[int, int]] = []
+    search_from = 0
+    while True:
+        idx = text.find(marker, search_from)
+        if idx == -1:
+            break
+        content_start = idx + len(marker)
+        content_end = len(text)
+        for bound in boundaries:
+            pos = text.find(bound, content_start)
+            if pos != -1:
+                content_end = min(content_end, pos)
+        if content_start < content_end:
+            spans.append((content_start, content_end))
+        search_from = content_start
+    return spans
+
+
+def _char_in_spans(char_idx: int, spans: Sequence[Tuple[int, int]]) -> bool:
+    return any(start <= char_idx < end for start, end in spans)
+
+
+def build_training_labels(
+    text: str,
+    tokenizer: Any,
+    *,
+    max_seq_len: int = 512,
+) -> Tuple[List[int], List[int]]:
+    """Next-token labels with loss only on <|assistant|> content spans."""
+    encoding = tokenizer.encode(text)
+    ids = list(encoding.ids[:max_seq_len])
+    n = len(ids)
+    if n == 0:
+        return [], []
+
+    spans = _assistant_content_spans(text)
+    offsets = getattr(encoding, "offsets", None)
+    labels = [IGNORE_LABEL] * n
+
+    for t in range(n - 1):
+        target_id = ids[t + 1]
+        trainable = False
+        if offsets is not None and t + 1 < len(offsets):
+            off = offsets[t + 1]
+            if off is not None:
+                start, end = off
+                if start is not None and end is not None and (end > start or start > 0):
+                    trainable = _char_in_spans(start, spans) or _char_in_spans(max(start, end - 1), spans)
+        if trainable:
+            labels[t] = target_id
+
+    return ids, labels
 
 
 def action_to_json(action: str, arguments: Dict[str, Any]) -> str:

@@ -60,3 +60,17 @@ Config knobs in `configs/train.yaml` under `synthetic:`.
 ## Training outputs (gitignored)
 
 `checkpoints/best.pt`, `metrics.csv`, `plots/curves.png`
+
+Training uses **next-token prediction** with loss only on `<|assistant|>` spans. Holdout eval uses **greedy** decoding (`temperature=0`).
+
+### Retrain on Quest (after label fix)
+
+```bash
+# Backup old run for comparison
+mv checkpoints checkpoints_old_$(date +%Y%m%d) 2>/dev/null || true
+
+# Sync code, then:
+INSTALL_DEPS=0 sbatch slurm/quest_train_msai.sh
+```
+
+Healthy curves: gradual loss decrease, holdout JSON valid &gt; 0 before action acc rises. See `checkpoints/holdout_failures_epoch*.jsonl` for sample errors.

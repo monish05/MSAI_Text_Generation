@@ -13,7 +13,7 @@ from _bootstrap import init
 
 init()
 
-from src.paths import ROOT, load_config, shard_paths  # noqa: E402
+from src.paths import PROCESSED, ROOT, load_config, shard_paths  # noqa: E402
 
 from src.model import DecoderOnlyTransformer, ModelConfig  # noqa: E402
 from src.training.dataset import (  # noqa: E402
@@ -68,6 +68,26 @@ def main() -> None:
         )
         val_loader = DataLoader(val_ds, batch_size=batch_size, shuffle=False, num_workers=num_workers, collate_fn=lambda b: collate_batch(b, pad_id))
 
+    kiosk_val_loader = None
+    kiosk_val_path = PROCESSED / "kiosk_val.jsonl"
+    if kiosk_val_path.exists():
+        kiosk_val_paths = {"kiosk": kiosk_val_path}
+        kiosk_val_ds = MixedDataset(
+            kiosk_val_paths,
+            {"kiosk": 1.0},
+            tokenizer,
+            max_seq_len=max_seq,
+            seed=seed + 1999,
+            fixed_indices=build_fixed_val_indices(kiosk_val_paths, {"kiosk": 1.0}, min(val_samples, 2000), seed + 1999),
+        )
+        kiosk_val_loader = DataLoader(
+            kiosk_val_ds,
+            batch_size=batch_size,
+            shuffle=False,
+            num_workers=num_workers,
+            collate_fn=lambda b: collate_batch(b, pad_id),
+        )
+
     train_loader = DataLoader(
         train_ds, batch_size=batch_size, shuffle=False, num_workers=num_workers, collate_fn=lambda b: collate_batch(b, pad_id)
     )
@@ -89,6 +109,7 @@ def main() -> None:
         device=device,
         checkpoint_dir=ROOT / "checkpoints",
         tokenizer=tokenizer,
+        kiosk_val_loader=kiosk_val_loader,
     )
 
 

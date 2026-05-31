@@ -68,7 +68,7 @@ def _generate_text(
     prompt: str,
     device: torch.device,
     max_new_tokens: int = 128,
-    temperature: float = 0.8,
+    temperature: float = 0.0,
 ) -> str:
     eos_id = tokenizer.token_to_id(SPECIAL_TOKENS["eos"])
     input_ids = _encode(tokenizer, prompt).to(device)
@@ -87,6 +87,7 @@ def generate_tool_call(
     available_names: Optional[List[str]] = None,
     device: torch.device,
     max_new_tokens: int = 128,
+    temperature: float = 0.0,
 ) -> Tuple[str, Optional[dict]]:
     system = build_system_prompt(tool_schemas, available_names)
     user = question
@@ -101,7 +102,9 @@ def generate_tool_call(
             SPECIAL_TOKENS["assistant"],
         ]
     )
-    text = _generate_text(model, tokenizer, prompt, device, max_new_tokens=max_new_tokens)
+    text = _generate_text(
+        model, tokenizer, prompt, device, max_new_tokens=max_new_tokens, temperature=temperature
+    )
     parsed = parse_action_json(text)
     raw_json = extract_json_from_text(text) or text.strip()
     return raw_json, parsed
