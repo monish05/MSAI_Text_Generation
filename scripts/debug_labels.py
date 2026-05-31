@@ -17,14 +17,17 @@ from tokenizers import Tokenizer  # noqa: E402
 
 def main() -> None:
     tok = Tokenizer.from_file(str(ROOT / "tokenizer" / "tokenizer.json"))
-    path = PROCESSED / "kiosk_val.jsonl"
+    path = PROCESSED / "kiosk_holdout.jsonl"
     if not path.exists():
-        print(f"Missing {path}")
+        path = PROCESSED / "kiosk_val.jsonl"
+    if not path.exists():
+        print(f"Missing processed kiosk jsonl under {PROCESSED}")
         sys.exit(1)
 
     with open(path, encoding="utf-8") as f:
         line = f.readline()
     text = json.loads(line)["text"]
+    print(f"sample: {path.name}")
     full_len = len(tok.encode(text).ids)
     ids, labels = build_training_labels(text, tok, max_seq_len=512)
     n_sup = sum(1 for lb in labels if lb != -100)

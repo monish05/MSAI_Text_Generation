@@ -8,7 +8,9 @@ from typing import Any, Dict, List, Optional
 
 import torch
 from tokenizers import Tokenizer
+from tqdm import tqdm
 
+from src.data.format import compact_system_for_inference
 from src.inference.generate import generate_tool_call
 from src.model import DecoderOnlyTransformer
 from src.paths import PROCESSED, ROOT
@@ -42,6 +44,7 @@ def evaluate_holdout(
     temperature: float = 0.0,
     log_failures: Optional[Path] = None,
     max_log_samples: int = 5,
+    max_samples: Optional[int] = None,
 ) -> Dict[str, Any]:
     if not holdout_path.exists():
         raise FileNotFoundError(f"Holdout not found: {holdout_path}")
@@ -54,14 +57,19 @@ def evaluate_holdout(
     failures: List[dict] = []
 
     with open(holdout_path, encoding="utf-8") as f:
-        for line in f:
-            row = json.loads(line)
-            text = row.get("text", "")
-            q = _extract_question(text)
-            if not q:
-                continue
-            system_prompt = _extract_system(text)
-            raw, parsed = generate_tool_call(
+        lines = f.readlines()
+    if max_samples is not None:
+        lines = lines[: max_samples]
+
+    for line in tqdm(lines, desc="holdout", unit="ex"):
+        row = json.loads(line)
+        text = row.get("text", "")
+        q = _extract_question(text)
+        if not q:
+            continue
+        row_system = _extract_system(text)
+        system_prompt = compact_system_for_inference(row_system, tool_schemas=schemas)
+        raw, parsed = generate_tool_call(
                 model,
                 tokenizer,
                 tool_schemas=schemas,
@@ -91,7 +99,7 @@ def evaluate_holdout(
                             "expected_action": expected,
                             "got_action": got,
                             "raw_output": raw[:500],
-                            "used_row_system": system_prompt is not None,
+                            "system_chars": len(system_prompt),
                             "parsed": parsed,
                         }
                     )

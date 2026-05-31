@@ -36,6 +36,26 @@ def build_system_prompt(tool_schemas: List[Dict[str, Any]], available_names: Opt
     return json.dumps(payload, ensure_ascii=False)
 
 
+def compact_system_for_inference(
+    system_blob: Optional[str] = None,
+    *,
+    tool_schemas: Optional[List[Dict[str, Any]]] = None,
+    drop_names: bool = True,
+) -> str:
+    """Short system JSON for generation (drop huge name lists from training rows)."""
+    if system_blob:
+        try:
+            data = json.loads(system_blob)
+            if drop_names:
+                data.pop("available_names", None)
+            return json.dumps(data, ensure_ascii=False)
+        except json.JSONDecodeError:
+            pass
+    if tool_schemas is not None:
+        return build_system_prompt(tool_schemas)
+    return system_blob or ""
+
+
 def format_training_text(
     *,
     system: str,
@@ -127,6 +147,7 @@ def encode_generation_prompt(
     tokenizer: Any,
     *,
     max_seq_len: int = 512,
+    max_system_tokens: int = 180,
 ) -> List[int]:
     """Encode system+user+<|assistant|>; always keep user and assistant marker in window."""
     suffix_ids: List[int] = []
@@ -135,12 +156,34 @@ def encode_generation_prompt(
     suffix_ids.extend(tokenizer.encode(SPECIAL_TOKENS["assistant"]).ids)
 
     budget = max(0, max_seq_len - len(suffix_ids))
+    if max_system_tokens > 0:
+        budget = min(budget, max_system_tokens)
     system_ids: List[int] = []
     system_ids.extend(tokenizer.encode(SPECIAL_TOKENS["system"]).ids)
     system_ids.extend(tokenizer.encode(system).ids)
     if len(system_ids) > budget:
         system_ids = system_ids[-budget:]
     return system_ids + suffix_ids
+
+
+def _truncate_supervised_window(
+    input_ids: List[int],
+    labels: List[int],
+    max_seq_len: int,
+) -> tuple[List[int], List[int]]:
+    """Keep the end of the sequence but never drop the first supervised assistant token."""
+    if len(input_ids) <= max_seq_len:
+        return input_ids, labels
+    supervised = [i for i, lb in enumerate(labels) if lb != IGNORE_LABEL]
+    if not supervised:
+        return input_ids[-max_seq_len:], labels[-max_seq_len:]
+    first_sup = supervised[0]
+    end = len(input_ids)
+    start = end - max_seq_len
+    if first_sup < start:
+        start = first_sup
+        end = min(len(input_ids), start + max_seq_len)
+    return input_ids[start:end], labels[start:end]
 
 
 def build_training_labels(
@@ -151,9 +194,8 @@ def build_training_labels(
 ) -> tuple[list[int], list[int]]:
     """Next-token labels on <|assistant|> content only.
 
-    Encodes each marker/content chunk separately (BPE-safe), then keeps the
-    **last** max_seq_len tokens so the huge system JSON does not push
-    <|assistant|> targets out of the window.
+    Encodes each marker/content chunk separately (BPE-safe), then truncates
+    to max_seq_len while keeping the earliest supervised assistant token.
     """
     parts = _MARKER_PATTERN.split(text)
     input_ids: list[int] = []
@@ -186,10 +228,7 @@ def build_training_labels(
             if content_ids:
                 _append_tokens(input_ids, labels, content_ids, supervise_content=False)
 
-    if len(input_ids) > max_seq_len:
-        input_ids = input_ids[-max_seq_len:]
-        labels = labels[-max_seq_len:]
-
+    input_ids, labels = _truncate_supervised_window(input_ids, labels, max_seq_len)
     return input_ids, labels
 
 

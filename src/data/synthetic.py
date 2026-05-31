@@ -535,7 +535,9 @@ def generate_synthetic_raw(
     slots = _load_json(SLOTS_PATH)
     prefixes = templates.get("prefixes") or [""]
     nicknames = templates.get("nicknames") or {}
-    system = build_system_prompt(schemas, slots.get("all_names", [])[:300])
+    # Omit available_names — a 10k+ system blob breaks 512-token windows (model never
+    # learns to emit {"action":...} from the user turn; holdout looks like schema soup).
+    system = build_system_prompt(schemas)
     executor, Action, PlannerContext = _setup_kiosk(archive, kiosk_root)
     names = NameTracker(name_window)
     questions = QuestionTracker(window=max(120, n_total // 10))
