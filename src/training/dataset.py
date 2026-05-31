@@ -93,11 +93,29 @@ class MixedDataset(Dataset):
 
     def __getitem__(self, index: int) -> Dict[str, torch.Tensor]:
         source, row_idx = self._epoch_indices[index]
-        text = self.rows[source][row_idx]["text"]
-        ids, label_ids = build_training_labels(text, self.tokenizer, max_seq_len=self.max_seq_len)
+        row = self.rows[source][row_idx]
+        text = row["text"]
+        ids, label_ids, action_anchor = build_training_labels(text, self.tokenizer, max_seq_len=self.max_seq_len)
+
+        action_label = IGNORE_ACTION_LABEL
+        if source == "kiosk":
+            from src.data.kiosk_actions import action_meta_to_label
+
+            action_label = action_meta_to_label(row.get("meta") or {})
+            if action_label < 0 or action_anchor is None:
+                action_label = IGNORE_ACTION_LABEL
+                action_anchor = -1
+        else:
+            action_anchor = -1
+
         input_ids = torch.tensor(ids, dtype=torch.long)
         labels = torch.tensor(label_ids, dtype=torch.long)
-        return {"input_ids": input_ids, "labels": labels}
+        return {
+            "input_ids": input_ids,
+            "labels": labels,
+            "action_label": torch.tensor(action_label, dtype=torch.long),
+            "action_anchor_idx": torch.tensor(action_anchor if action_anchor is not None else -1, dtype=torch.long),
+        }
 
 
 def build_fixed_val_indices(shard_paths: Dict[str, Path], weights: Dict[str, float], n: int, seed: int) -> List[IndexEntry]:
@@ -107,9 +125,16 @@ def build_fixed_val_indices(shard_paths: Dict[str, Path], weights: Dict[str, flo
 
 def collate_batch(batch: List[dict], pad_id: int = 0) -> Dict[str, torch.Tensor]:
     max_len = max(b["input_ids"].size(0) for b in batch)
-    input_ids, labels = [], []
+    input_ids, labels, action_labels, action_anchors = [], [], [], []
     for b in batch:
         pad_len = max_len - b["input_ids"].size(0)
         input_ids.append(torch.cat([b["input_ids"], torch.full((pad_len,), pad_id, dtype=torch.long)]))
         labels.append(torch.cat([b["labels"], torch.full((pad_len,), -100, dtype=torch.long)]))
-    return {"input_ids": torch.stack(input_ids), "labels": torch.stack(labels)}
+        action_labels.append(b["action_label"])
+        action_anchors.append(b["action_anchor_idx"])
+    return {
+        "input_ids": torch.stack(input_ids),
+        "labels": torch.stack(labels),
+        "action_label": torch.stack(action_labels),
+        "action_anchor_idx": torch.stack(action_anchors),
+    }

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import math
-from typing import Optional
+from typing import Optional, Tuple
 
 import torch
 import torch.nn as nn
@@ -74,12 +74,15 @@ class DecoderOnlyTransformer(nn.Module):
         self.ln_f = nn.LayerNorm(cfg.d_model)
         self.lm_head = nn.Linear(cfg.d_model, cfg.vocab_size, bias=False)
         self.token_emb.weight = self.lm_head.weight  # weight tying
+        self.action_head = nn.Linear(cfg.d_model, cfg.num_action_classes)
 
     def forward(
         self,
         input_ids: torch.Tensor,
         labels: Optional[torch.Tensor] = None,
-    ) -> tuple[torch.Tensor, Optional[torch.Tensor]]:
+        action_labels: Optional[torch.Tensor] = None,
+        action_anchor_idx: Optional[torch.Tensor] = None,
+    ) -> Tuple[torch.Tensor, Optional[torch.Tensor], Optional[torch.Tensor]]:
         b, t = input_ids.shape
         if t > self.cfg.max_seq_len:
             input_ids = input_ids[:, -self.cfg.max_seq_len :]
@@ -97,14 +100,62 @@ class DecoderOnlyTransformer(nn.Module):
         x = self.ln_f(x)
         logits = self.lm_head(x)
 
-        loss = None
+        lm_loss: Optional[torch.Tensor] = None
         if labels is not None:
-            loss = F.cross_entropy(
+            lm_loss = F.cross_entropy(
                 logits.view(-1, logits.size(-1)),
                 labels.view(-1),
                 ignore_index=-100,
             )
-        return logits, loss
+
+        action_loss: Optional[torch.Tensor] = None
+        if (
+            action_labels is not None
+            and action_anchor_idx is not None
+            and self.cfg.action_loss_weight > 0
+            and self.cfg.num_action_classes > 0
+        ):
+            valid = (action_labels >= 0) & (action_anchor_idx >= 0)
+            if valid.any():
+                batch_idx = valid.nonzero(as_tuple=True)[0]
+                anchors = action_anchor_idx[batch_idx]
+                hidden = x[batch_idx, anchors, :]
+                action_logits = self.action_head(hidden)
+                action_loss = F.cross_entropy(action_logits, action_labels[batch_idx])
+
+        total_loss: Optional[torch.Tensor] = None
+        if lm_loss is not None:
+            total_loss = lm_loss
+            if action_loss is not None:
+                total_loss = lm_loss + self.cfg.action_loss_weight * action_loss
+        elif action_loss is not None:
+            total_loss = self.cfg.action_loss_weight * action_loss
+
+        return logits, total_loss, action_loss
+
+    def predict_action_logits(
+        self,
+        input_ids: torch.Tensor,
+        action_anchor_idx: torch.Tensor,
+    ) -> torch.Tensor:
+        """Action-class logits at anchor positions (inference)."""
+        _, t = input_ids.shape
+        if t > self.cfg.max_seq_len:
+            offset = t - self.cfg.max_seq_len
+            input_ids = input_ids[:, -self.cfg.max_seq_len :]
+            action_anchor_idx = action_anchor_idx - offset
+            t = input_ids.shape[1]
+
+        pos = torch.arange(0, t, device=input_ids.device).unsqueeze(0)
+        x = self.drop(self.token_emb(input_ids) + self.pos_emb(pos))
+        mask = torch.tril(torch.ones(t, t, device=input_ids.device)).unsqueeze(0).unsqueeze(0)
+        for block in self.blocks:
+            x = block(x, mask)
+        x = self.ln_f(x)
+        batch_idx = torch.arange(input_ids.size(0), device=input_ids.device)
+        anchors = action_anchor_idx.clamp(min=0, max=t - 1)
+        hidden = x[batch_idx, anchors, :]
+        return self.action_head(hidden)
 
     @torch.no_grad()
     def generate(
@@ -117,7 +168,7 @@ class DecoderOnlyTransformer(nn.Module):
         self.eval()
         for _ in range(max_new_tokens):
             ctx = input_ids[:, -self.cfg.max_seq_len :]
-            logits, _ = self(ctx)
+            logits, _, _ = self(ctx)
             logits = logits[:, -1, :]
             if temperature is not None and temperature <= 0:
                 next_id = logits.argmax(dim=-1, keepdim=True)

@@ -25,6 +25,8 @@ METRICS_COLUMNS = [
     "val_token_acc",
     "kiosk_val_loss",
     "kiosk_val_token_acc",
+    "kiosk_val_action_acc",
+    "train_action_loss",
     "holdout_action_acc",
     "holdout_json_valid",
     "global_step",
@@ -84,6 +86,8 @@ def train(
         train_ds.set_epoch(epoch)
         model.train()
         epoch_loss_sum = 0.0
+        epoch_action_loss_sum = 0.0
+        epoch_action_batches = 0
         epoch_batches = 0
 
         pbar = tqdm(train_loader, desc=f"epoch {epoch + 1}/{num_epochs}")
@@ -93,7 +97,14 @@ def train(
 
             input_ids = batch["input_ids"].to(device)
             labels = batch["labels"].to(device)
-            _, loss = model(input_ids, labels)
+            action_labels = batch["action_label"].to(device)
+            action_anchor_idx = batch["action_anchor_idx"].to(device)
+            _, loss, action_loss = model(
+                input_ids,
+                labels,
+                action_labels=action_labels,
+                action_anchor_idx=action_anchor_idx,
+            )
 
             optimizer.zero_grad(set_to_none=True)
             loss.backward()
@@ -103,21 +114,31 @@ def train(
             loss_val = loss.item()
             epoch_loss_sum += loss_val
             epoch_batches += 1
+            if action_loss is not None:
+                epoch_action_loss_sum += action_loss.item()
+                epoch_action_batches += 1
             global_step += 1
 
             if batch_idx % log_every == 0:
-                pbar.set_postfix(loss=f"{loss_val:.4f}", lr=f"{lr_at(global_step):.2e}")
+                postfix = {"loss": f"{loss_val:.4f}", "lr": f"{lr_at(global_step):.2e}"}
+                if action_loss is not None:
+                    postfix["act_loss"] = f"{action_loss.item():.4f}"
+                pbar.set_postfix(postfix)
 
         train_loss = epoch_loss_sum / max(epoch_batches, 1)
+        train_action_loss = (
+            epoch_action_loss_sum / max(epoch_action_batches, 1) if epoch_action_batches else None
+        )
         val_loss: Optional[float] = None
         val_token_acc: Optional[float] = None
         kiosk_val_loss: Optional[float] = None
         kiosk_val_token_acc: Optional[float] = None
+        kiosk_val_action_acc: Optional[float] = None
         holdout_action_acc: Optional[float] = None
         holdout_json_valid: Optional[float] = None
 
         if val_loader and (epoch + 1) % eval_every_epochs == 0:
-            val_loss, val_token_acc = _eval_epoch_metrics(model, val_loader, device)
+            val_loss, val_token_acc, _ = _eval_epoch_metrics(model, val_loader, device)
             msg = f"epoch {epoch + 1} train_loss={train_loss:.4f} val_loss={val_loss:.4f} val_token_acc={val_token_acc:.4f}"
             if val_loss < best_val:
                 best_val = val_loss
@@ -135,17 +156,25 @@ def train(
             tqdm.write(f"epoch {epoch + 1} train_loss={train_loss:.4f}")
 
         if kiosk_val_loader and (epoch + 1) % eval_every_epochs == 0:
-            kiosk_val_loss, kiosk_val_token_acc = _eval_epoch_metrics(model, kiosk_val_loader, device)
+            kiosk_val_loss, kiosk_val_token_acc, kiosk_val_action_acc = _eval_epoch_metrics(
+                model, kiosk_val_loader, device, track_action=True
+            )
             if kiosk_val_loss is not None and not math.isfinite(kiosk_val_loss):
                 tqdm.write(
                     f"epoch {epoch + 1} WARNING: kiosk_val_loss=nan — no supervised labels in kiosk val; "
                     "pull latest src/data/format.py (_labels_from_char_prefix fix)."
                 )
             else:
-                tqdm.write(
+                msg = (
                     f"epoch {epoch + 1} kiosk_val_loss={kiosk_val_loss:.4f} "
                     f"kiosk_val_token_acc={kiosk_val_token_acc:.4f}"
                 )
+                if kiosk_val_action_acc is not None:
+                    msg += f" kiosk_val_action_acc={kiosk_val_action_acc:.4f}"
+                tqdm.write(msg)
+
+        if train_action_loss is not None:
+            tqdm.write(f"epoch {epoch + 1} train_action_loss={train_action_loss:.4f}")
 
         if (
             tokenizer is not None
@@ -174,6 +203,8 @@ def train(
             val_token_acc,
             kiosk_val_loss,
             kiosk_val_token_acc,
+            kiosk_val_action_acc,
+            train_action_loss,
             holdout_action_acc,
             holdout_json_valid,
             global_step,
@@ -231,36 +262,60 @@ def _eval_epoch_metrics(
     model: DecoderOnlyTransformer,
     loader: DataLoader,
     device: torch.device,
-) -> Tuple[float, float]:
+    *,
+    track_action: bool = False,
+) -> Tuple[float, float, Optional[float]]:
     model.eval()
     total_loss = 0.0
     correct = 0
     total_tokens = 0
     n_loss_batches = 0
+    action_correct = 0
+    action_total = 0
 
     for batch in loader:
         input_ids = batch["input_ids"].to(device)
         labels = batch["labels"].to(device)
-        logits, loss = model(input_ids, labels)
+        action_labels = batch["action_label"].to(device)
+        action_anchor_idx = batch["action_anchor_idx"].to(device)
+        logits, loss, _ = model(
+            input_ids,
+            labels,
+            action_labels=action_labels,
+            action_anchor_idx=action_anchor_idx,
+        )
 
         mask = labels != -100
         n_supervised = mask.sum().item()
-        if n_supervised == 0:
+        if n_supervised == 0 and not track_action:
             continue
 
-        loss_val = loss.item()
-        if math.isfinite(loss_val):
-            total_loss += loss_val
-            n_loss_batches += 1
+        if loss is not None:
+            loss_val = loss.item()
+            if math.isfinite(loss_val):
+                total_loss += loss_val
+                n_loss_batches += 1
 
-        pred = logits.argmax(dim=-1)
-        correct += (pred[mask] == labels[mask]).sum().item()
-        total_tokens += n_supervised
+        if n_supervised > 0:
+            pred = logits.argmax(dim=-1)
+            correct += (pred[mask] == labels[mask]).sum().item()
+            total_tokens += n_supervised
+
+        if track_action:
+            valid = (action_labels >= 0) & (action_anchor_idx >= 0)
+            if valid.any():
+                batch_idx = valid.nonzero(as_tuple=True)[0]
+                anchors = action_anchor_idx[batch_idx]
+                hidden_logits = model.predict_action_logits(input_ids, anchors)
+                pred_action = hidden_logits.argmax(dim=-1)
+                action_correct += (pred_action == action_labels[batch_idx]).sum().item()
+                action_total += batch_idx.numel()
 
     model.train()
     avg_loss = total_loss / max(n_loss_batches, 1) if n_loss_batches else float("nan")
     token_acc = correct / max(total_tokens, 1)
-    return avg_loss, token_acc
+    action_acc = action_correct / max(action_total, 1) if action_total else None
+    return avg_loss, token_acc, action_acc
 
 
 def _save_checkpoint(
@@ -300,6 +355,8 @@ def _append_metrics(
     val_token_acc: Optional[float],
     kiosk_val_loss: Optional[float],
     kiosk_val_token_acc: Optional[float],
+    kiosk_val_action_acc: Optional[float],
+    train_action_loss: Optional[float],
     holdout_action_acc: Optional[float],
     holdout_json_valid: Optional[float],
     global_step: int,
@@ -313,6 +370,8 @@ def _append_metrics(
                 val_token_acc if val_token_acc is not None else "",
                 kiosk_val_loss if kiosk_val_loss is not None else "",
                 kiosk_val_token_acc if kiosk_val_token_acc is not None else "",
+                kiosk_val_action_acc if kiosk_val_action_acc is not None else "",
+                train_action_loss if train_action_loss is not None else "",
                 holdout_action_acc if holdout_action_acc is not None else "",
                 holdout_json_valid if holdout_json_valid is not None else "",
                 global_step,

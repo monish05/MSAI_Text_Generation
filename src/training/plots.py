@@ -67,7 +67,8 @@ def plot_training_curves(metrics_path: Path, out_dir: Path) -> Optional[Path]:
     for key, label, style in (
         ("val_token_acc", "val token acc", "-"),
         ("kiosk_val_token_acc", "kiosk val acc", "-."),
-        ("holdout_action_acc", "holdout action acc", "--"),
+        ("kiosk_val_action_acc", "kiosk val action acc", "--"),
+        ("holdout_action_acc", "holdout action acc", "-"),
         ("holdout_json_valid", "holdout JSON valid", ":"),
     ):
         xs, ys = _series(rows, key)

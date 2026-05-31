@@ -29,7 +29,7 @@ def main() -> None:
     text = json.loads(line)["text"]
     print(f"sample: {path.name}")
     full_len = len(tok.encode(text).ids)
-    ids, labels = build_training_labels(text, tok, max_seq_len=512)
+    ids, labels, action_anchor = build_training_labels(text, tok, max_seq_len=512)
     n_sup = sum(1 for lb in labels if lb != -100)
     n_asst = text.count(SPECIAL_TOKENS["assistant"])
 
@@ -41,12 +41,12 @@ def main() -> None:
         + SPECIAL_TOKENS["assistant"]
         + '{"action":"noop","arguments":{}}'
     )
-    _, probe_labels = build_training_labels(probe, tok, max_seq_len=128)
+    _, probe_labels, _ = build_training_labels(probe, tok, max_seq_len=128)
     first_json_supervised = any(lb == tok.encode("{").ids[0] for lb in probe_labels if lb != -100)
 
     print(
         f"full_encode_len={full_len} truncated_len={len(ids)} supervised={n_sup} "
-        f"assistant_markers={n_asst} first_json_supervised={first_json_supervised}"
+        f"assistant_markers={n_asst} action_anchor={action_anchor} first_json_supervised={first_json_supervised}"
     )
     if n_sup == 0:
         print("FAIL: zero supervised — pull latest format.py (tail truncation fix)")

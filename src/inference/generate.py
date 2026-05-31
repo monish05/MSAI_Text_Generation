@@ -11,12 +11,14 @@ from tokenizers import Tokenizer
 
 from src.data.format import (
     SPECIAL_TOKENS,
+    action_to_json,
     build_system_prompt,
     encode_formatted_text,
     encode_generation_prompt,
     extract_json_from_text,
     parse_action_json,
 )
+from src.data.kiosk_actions import action_id_to_name
 from src.model import DecoderOnlyTransformer, ModelConfig
 
 
@@ -39,7 +41,7 @@ def load_model_and_tokenizer(
     mcfg.vocab_size = max(mcfg.vocab_size, vocab_size)
 
     model = DecoderOnlyTransformer(mcfg)
-    model.load_state_dict(ckpt["model_state"])
+    model.load_state_dict(ckpt["model_state"], strict=False)
 
     if device is None:
         if torch.cuda.is_available():
@@ -100,6 +102,23 @@ def _generate_text(
     return tokenizer.decode(new_ids.tolist())
 
 
+def _predict_kiosk_action(
+    model: DecoderOnlyTransformer,
+    input_ids: torch.Tensor,
+    device: torch.device,
+) -> Tuple[Optional[str], float]:
+    """Run action head at the last prompt token (assistant marker)."""
+    if not hasattr(model, "action_head") or model.cfg.num_action_classes <= 0:
+        return None, 0.0
+    anchor = torch.tensor([input_ids.size(1) - 1], dtype=torch.long, device=device)
+    with torch.no_grad():
+        logits = model.predict_action_logits(input_ids, anchor)
+        probs = torch.softmax(logits, dim=-1)
+        conf, pred_id = probs.max(dim=-1)
+    action = action_id_to_name(int(pred_id.item()))
+    return action, float(conf.item())
+
+
 def generate_tool_call(
     model: DecoderOnlyTransformer,
     tokenizer: Tokenizer,
@@ -112,6 +131,7 @@ def generate_tool_call(
     device: torch.device,
     max_new_tokens: int = 128,
     temperature: float = 0.0,
+    action_head_confidence: float = 0.5,
 ) -> Tuple[str, Optional[dict]]:
     system = system_prompt or build_system_prompt(tool_schemas, available_names)
     user = question
@@ -126,6 +146,12 @@ def generate_tool_call(
             SPECIAL_TOKENS["assistant"],
         ]
     )
+    max_seq = getattr(model.cfg, "max_seq_len", 512)
+    input_ids = _encode_tool_call_prompt(
+        tokenizer, system=system, user=user, max_seq_len=max_seq
+    ).to(device)
+    head_action, head_conf = _predict_kiosk_action(model, input_ids, device)
+
     text = _generate_text(
         model,
         tokenizer,
@@ -138,6 +164,11 @@ def generate_tool_call(
     )
     parsed = parse_action_json(text)
     raw_json = extract_json_from_text(text) or text.strip()
+
+    if parsed is None and head_action and head_conf >= action_head_confidence:
+        parsed = {"action": head_action, "arguments": {}}
+        raw_json = action_to_json(head_action, {})
+
     return raw_json, parsed
 
 

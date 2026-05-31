@@ -19,6 +19,7 @@ model:
   d_ff: 1024
   max_seq_len: 512
   dropout: 0.1
+  num_action_classes: 9          # 8 kiosk tools + noop; set from schemas at train time
 
 tokenizer:
   vocab_size: 12000
@@ -36,6 +37,7 @@ training:
   grad_clip: 1.0
   eval_every_epochs: 1
   holdout_eval_every_epochs: 1   # 0 = skip holdout during training (faster)
+  action_loss_weight: 0.2         # kiosk-only auxiliary tool-selection CE
   plot_every_epochs: 1
   log_every: 50
   device: cuda

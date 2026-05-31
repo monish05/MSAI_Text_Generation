@@ -18,6 +18,7 @@ init()
 from src.paths import PROCESSED, ROOT, load_config, shard_paths  # noqa: E402
 
 from src.model import DecoderOnlyTransformer, ModelConfig  # noqa: E402
+from src.data.kiosk_actions import num_action_classes  # noqa: E402
 from src.training.dataset import (  # noqa: E402
     MixedDataset,
     auto_samples_per_epoch,
@@ -100,11 +101,14 @@ def main() -> None:
 
     mcfg = ModelConfig.from_dict(cfg, vocab_size=tokenizer.get_vocab_size())
     mcfg.pad_token_id = pad_id
+    mcfg.num_action_classes = num_action_classes()
     device = _resolve_device(tcfg.get("device", "cuda"))
 
     print(
         f"device={device} epochs={num_epochs} samples/epoch={samples_per_epoch} "
-        f"steps/epoch={math.ceil(samples_per_epoch / batch_size)} batch={batch_size} vocab={mcfg.vocab_size}"
+        f"steps/epoch={math.ceil(samples_per_epoch / batch_size)} batch={batch_size} "
+        f"vocab={mcfg.vocab_size} action_classes={mcfg.num_action_classes} "
+        f"action_loss_weight={mcfg.action_loss_weight}"
     )
     train(
         DecoderOnlyTransformer(mcfg),
