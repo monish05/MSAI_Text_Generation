@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import csv
+import math
 from pathlib import Path
 from typing import Any, Dict, Optional, Tuple
 
@@ -229,22 +230,29 @@ def _eval_epoch_metrics(
     total_loss = 0.0
     correct = 0
     total_tokens = 0
-    n_batches = 0
+    n_loss_batches = 0
 
     for batch in loader:
         input_ids = batch["input_ids"].to(device)
         labels = batch["labels"].to(device)
         logits, loss = model(input_ids, labels)
-        total_loss += loss.item()
-        n_batches += 1
+
+        mask = labels != -100
+        n_supervised = mask.sum().item()
+        if n_supervised == 0:
+            continue
+
+        loss_val = loss.item()
+        if math.isfinite(loss_val):
+            total_loss += loss_val
+            n_loss_batches += 1
 
         pred = logits.argmax(dim=-1)
-        mask = labels != -100
         correct += (pred[mask] == labels[mask]).sum().item()
-        total_tokens += mask.sum().item()
+        total_tokens += n_supervised
 
     model.train()
-    avg_loss = total_loss / max(n_batches, 1)
+    avg_loss = total_loss / max(n_loss_batches, 1) if n_loss_batches else float("nan")
     token_acc = correct / max(total_tokens, 1)
     return avg_loss, token_acc
 

@@ -96,6 +96,56 @@ def _char_in_spans(char_idx: int, spans: Sequence[Tuple[int, int]]) -> bool:
     return any(start <= char_idx < end for start, end in spans)
 
 
+def _find_subsequence(haystack: Sequence[int], needle: Sequence[int]) -> List[int]:
+    if not needle or len(needle) > len(haystack):
+        return []
+    m = len(needle)
+    return [i for i in range(len(haystack) - m + 1) if list(haystack[i : i + m]) == list(needle)]
+
+
+def _labels_from_marker_tokens(ids: List[int], tokenizer: Any) -> List[int]:
+    """Fallback when char offsets are missing (common on some Windows tokenizers)."""
+    n = len(ids)
+    labels = [IGNORE_LABEL] * n
+    asst = tokenizer.encode(SPECIAL_TOKENS["assistant"]).ids
+    if not asst:
+        return labels
+    boundaries = [
+        tokenizer.encode(SPECIAL_TOKENS[k]).ids
+        for k in ("user", "tool", "system", "eos")
+    ]
+    for st in _find_subsequence(ids, asst):
+        content_start = st + len(asst)
+        content_end = n
+        for bound in boundaries:
+            if not bound:
+                continue
+            for pos in _find_subsequence(ids[content_start:], bound):
+                content_end = min(content_end, content_start + pos)
+                break
+        for t in range(max(0, content_start - 1), min(n - 1, content_end - 1)):
+            labels[t] = ids[t + 1]
+    return labels
+
+
+def _labels_from_offsets(ids: List[int], spans: Sequence[Tuple[int, int]], offsets: Sequence) -> List[int]:
+    n = len(ids)
+    labels = [IGNORE_LABEL] * n
+    for t in range(n - 1):
+        if t + 1 >= len(offsets):
+            break
+        off = offsets[t + 1]
+        if off is None:
+            continue
+        start, end = off
+        if start is None or end is None:
+            continue
+        if end > start or start > 0:
+            if _char_in_spans(start, spans) or _char_in_spans(max(start, end - 1), spans):
+                labels[t] = ids[t + 1]
+    return labels
+
+
 def build_training_labels(
     text: str,
     tokenizer: Any,
@@ -111,19 +161,13 @@ def build_training_labels(
 
     spans = _assistant_content_spans(text)
     offsets = getattr(encoding, "offsets", None)
-    labels = [IGNORE_LABEL] * n
+    if offsets is not None and len(offsets) >= n:
+        labels = _labels_from_offsets(ids, spans, offsets)
+    else:
+        labels = [IGNORE_LABEL] * n
 
-    for t in range(n - 1):
-        target_id = ids[t + 1]
-        trainable = False
-        if offsets is not None and t + 1 < len(offsets):
-            off = offsets[t + 1]
-            if off is not None:
-                start, end = off
-                if start is not None and end is not None and (end > start or start > 0):
-                    trainable = _char_in_spans(start, spans) or _char_in_spans(max(start, end - 1), spans)
-        if trainable:
-            labels[t] = target_id
+    if sum(1 for lb in labels if lb != IGNORE_LABEL) == 0:
+        labels = _labels_from_marker_tokens(ids, tokenizer)
 
     return ids, labels
 
