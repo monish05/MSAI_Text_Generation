@@ -10,7 +10,7 @@ from _bootstrap import init
 
 init()
 
-from src.data.format import build_training_labels  # noqa: E402
+from src.data.format import SPECIAL_TOKENS, build_training_labels  # noqa: E402
 from src.paths import PROCESSED, ROOT  # noqa: E402
 from tokenizers import Tokenizer  # noqa: E402
 
@@ -25,13 +25,14 @@ def main() -> None:
     with open(path, encoding="utf-8") as f:
         line = f.readline()
     text = json.loads(line)["text"]
-    ids, labels = build_training_labels(text, tok)
+    full_len = len(tok.encode(text).ids)
+    ids, labels = build_training_labels(text, tok, max_seq_len=512)
     n_sup = sum(1 for lb in labels if lb != -100)
-    print(f"seq_len={len(ids)} supervised={n_sup}")
-    if "<|assistant|>" not in text:
-        print("WARNING: no <|assistant|> in text")
+    n_asst = text.count(SPECIAL_TOKENS["assistant"])
+
+    print(f"full_encode_len={full_len} truncated_len={len(ids)} supervised={n_sup} assistant_markers={n_asst}")
     if n_sup == 0:
-        print("FAIL: zero supervised tokens — update src/data/format.py")
+        print("FAIL: zero supervised — pull latest format.py (tail truncation fix)")
         sys.exit(1)
     print("OK")
 

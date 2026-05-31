@@ -32,7 +32,7 @@ def build_system_prompt(tool_schemas: List[Dict[str, Any]], available_names: Opt
         "tool_schemas": tool_schemas,
     }
     if available_names:
-        payload["available_names"] = available_names[:500]
+        payload["available_names"] = available_names[:80]
     return json.dumps(payload, ensure_ascii=False)
 
 
@@ -76,18 +76,13 @@ def _append_tokens(
     token_ids: List[int],
     *,
     supervise_content: bool,
-    max_seq_len: int,
-) -> bool:
-    """Append tokens; return False if max_seq_len reached."""
+) -> None:
     for j, tid in enumerate(token_ids):
-        if len(input_ids) >= max_seq_len:
-            return False
         input_ids.append(tid)
         if supervise_content and j + 1 < len(token_ids):
             labels.append(token_ids[j + 1])
         else:
             labels.append(IGNORE_LABEL)
-    return True
 
 
 def build_training_labels(
@@ -95,15 +90,16 @@ def build_training_labels(
     tokenizer: Any,
     *,
     max_seq_len: int = 512,
-) -> Tuple[List[int], List[int]]:
+) -> tuple[list[int], list[int]]:
     """Next-token labels on <|assistant|> content only.
 
-    Encodes each marker and content chunk separately so labels align with
-    input_ids (full-string BPE + char offsets break on Windows).
+    Encodes each marker/content chunk separately (BPE-safe), then keeps the
+    **last** max_seq_len tokens so the huge system JSON does not push
+    <|assistant|> targets out of the window.
     """
     parts = _MARKER_PATTERN.split(text)
-    input_ids: List[int] = []
-    labels: List[int] = []
+    input_ids: list[int] = []
+    labels: list[int] = []
     idx = 0
 
     while idx < len(parts):
@@ -112,8 +108,7 @@ def build_training_labels(
             idx += 1
             continue
         if part not in SPECIAL_TOKENS.values():
-            if not _append_tokens(input_ids, labels, tokenizer.encode(part).ids, supervise_content=False, max_seq_len=max_seq_len):
-                break
+            _append_tokens(input_ids, labels, tokenizer.encode(part).ids, supervise_content=False)
             idx += 1
             continue
 
@@ -122,18 +117,18 @@ def build_training_labels(
         idx += 2
         supervise = marker == SPECIAL_TOKENS["assistant"]
 
-        if not _append_tokens(
-            input_ids, labels, tokenizer.encode(marker).ids, supervise_content=False, max_seq_len=max_seq_len
-        ):
-            break
-        if content and not _append_tokens(
-            input_ids,
-            labels,
-            tokenizer.encode(content).ids,
-            supervise_content=supervise,
-            max_seq_len=max_seq_len,
-        ):
-            break
+        _append_tokens(input_ids, labels, tokenizer.encode(marker).ids, supervise_content=False)
+        if content:
+            _append_tokens(
+                input_ids,
+                labels,
+                tokenizer.encode(content).ids,
+                supervise_content=supervise,
+            )
+
+    if len(input_ids) > max_seq_len:
+        input_ids = input_ids[-max_seq_len:]
+        labels = labels[-max_seq_len:]
 
     return input_ids, labels
 
