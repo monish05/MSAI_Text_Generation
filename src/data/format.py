@@ -103,6 +103,26 @@ def _find_subsequence(haystack: Sequence[int], needle: Sequence[int]) -> List[in
     return [i for i in range(len(haystack) - m + 1) if list(haystack[i : i + m]) == list(needle)]
 
 
+def _labels_from_char_prefix(
+    ids: List[int],
+    text: str,
+    spans: Sequence[Tuple[int, int]],
+    tokenizer: Any,
+    n: int,
+) -> List[int]:
+    """Map char spans to token indices via encode(text[:pos]) lengths (works on Windows)."""
+    labels = [IGNORE_LABEL] * n
+    for content_start, content_end in spans:
+        tok_start = len(tokenizer.encode(text[:content_start]).ids)
+        tok_end = len(tokenizer.encode(text[:content_end]).ids)
+        tok_start = min(tok_start, n)
+        tok_end = min(tok_end, n)
+        for t in range(max(0, tok_start - 1), tok_end - 1):
+            if t < n - 1:
+                labels[t] = ids[t + 1]
+    return labels
+
+
 def _labels_from_marker_tokens(ids: List[int], tokenizer: Any) -> List[int]:
     """Fallback when char offsets are missing (common on some Windows tokenizers)."""
     n = len(ids)
@@ -160,11 +180,12 @@ def build_training_labels(
         return [], []
 
     spans = _assistant_content_spans(text)
-    offsets = getattr(encoding, "offsets", None)
-    if offsets is not None and len(offsets) >= n:
-        labels = _labels_from_offsets(ids, spans, offsets)
-    else:
-        labels = [IGNORE_LABEL] * n
+    labels = _labels_from_char_prefix(ids, text, spans, tokenizer, n)
+
+    if sum(1 for lb in labels if lb != IGNORE_LABEL) == 0:
+        offsets = getattr(encoding, "offsets", None)
+        if offsets is not None and len(offsets) >= n:
+            labels = _labels_from_offsets(ids, spans, offsets)
 
     if sum(1 for lb in labels if lb != IGNORE_LABEL) == 0:
         labels = _labels_from_marker_tokens(ids, tokenizer)

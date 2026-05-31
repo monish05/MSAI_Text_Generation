@@ -136,10 +136,16 @@ def train(
 
         if kiosk_val_loader and (epoch + 1) % eval_every_epochs == 0:
             kiosk_val_loss, kiosk_val_token_acc = _eval_epoch_metrics(model, kiosk_val_loader, device)
-            tqdm.write(
-                f"epoch {epoch + 1} kiosk_val_loss={kiosk_val_loss:.4f} "
-                f"kiosk_val_token_acc={kiosk_val_token_acc:.4f}"
-            )
+            if kiosk_val_loss is not None and not math.isfinite(kiosk_val_loss):
+                tqdm.write(
+                    f"epoch {epoch + 1} WARNING: kiosk_val_loss=nan — no supervised labels in kiosk val; "
+                    "pull latest src/data/format.py (_labels_from_char_prefix fix)."
+                )
+            else:
+                tqdm.write(
+                    f"epoch {epoch + 1} kiosk_val_loss={kiosk_val_loss:.4f} "
+                    f"kiosk_val_token_acc={kiosk_val_token_acc:.4f}"
+                )
 
         if (
             tokenizer is not None
