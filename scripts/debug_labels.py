@@ -30,7 +30,21 @@ def main() -> None:
     n_sup = sum(1 for lb in labels if lb != -100)
     n_asst = text.count(SPECIAL_TOKENS["assistant"])
 
-    print(f"full_encode_len={full_len} truncated_len={len(ids)} supervised={n_sup} assistant_markers={n_asst}")
+    probe = (
+        SPECIAL_TOKENS["system"]
+        + "{}"
+        + SPECIAL_TOKENS["user"]
+        + "test"
+        + SPECIAL_TOKENS["assistant"]
+        + '{"action":"noop","arguments":{}}'
+    )
+    _, probe_labels = build_training_labels(probe, tok, max_seq_len=128)
+    first_json_supervised = any(lb == tok.encode("{").ids[0] for lb in probe_labels if lb != -100)
+
+    print(
+        f"full_encode_len={full_len} truncated_len={len(ids)} supervised={n_sup} "
+        f"assistant_markers={n_asst} first_json_supervised={first_json_supervised}"
+    )
     if n_sup == 0:
         print("FAIL: zero supervised — pull latest format.py (tail truncation fix)")
         sys.exit(1)

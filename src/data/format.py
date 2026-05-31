@@ -85,6 +85,42 @@ def _append_tokens(
             labels.append(IGNORE_LABEL)
 
 
+def _append_marker_and_content(
+    input_ids: List[int],
+    labels: List[int],
+    marker_ids: List[int],
+    content_ids: List[int],
+    *,
+    supervise: bool,
+) -> None:
+    """Supervise assistant spans including first JSON token after <|assistant|>."""
+    for j, tid in enumerate(marker_ids):
+        input_ids.append(tid)
+        if j + 1 < len(marker_ids):
+            labels.append(marker_ids[j + 1])
+        elif supervise and content_ids:
+            labels.append(content_ids[0])
+        else:
+            labels.append(IGNORE_LABEL)
+    for j, tid in enumerate(content_ids):
+        input_ids.append(tid)
+        if supervise and j + 1 < len(content_ids):
+            labels.append(content_ids[j + 1])
+        else:
+            labels.append(IGNORE_LABEL)
+
+
+def encode_formatted_text(
+    text: str,
+    tokenizer: Any,
+    *,
+    max_seq_len: int = 512,
+) -> List[int]:
+    """Same segment encoding as training (for inference prompts)."""
+    ids, _ = build_training_labels(text, tokenizer, max_seq_len=max_seq_len)
+    return ids
+
+
 def build_training_labels(
     text: str,
     tokenizer: Any,
@@ -116,15 +152,17 @@ def build_training_labels(
         content = parts[idx + 1] if idx + 1 < len(parts) else ""
         idx += 2
         supervise = marker == SPECIAL_TOKENS["assistant"]
+        marker_ids = tokenizer.encode(marker).ids
+        content_ids = tokenizer.encode(content).ids if content else []
 
-        _append_tokens(input_ids, labels, tokenizer.encode(marker).ids, supervise_content=False)
-        if content:
-            _append_tokens(
-                input_ids,
-                labels,
-                tokenizer.encode(content).ids,
-                supervise_content=supervise,
+        if supervise and content_ids:
+            _append_marker_and_content(
+                input_ids, labels, marker_ids, content_ids, supervise=True
             )
+        else:
+            _append_tokens(input_ids, labels, marker_ids, supervise_content=False)
+            if content_ids:
+                _append_tokens(input_ids, labels, content_ids, supervise_content=False)
 
     if len(input_ids) > max_seq_len:
         input_ids = input_ids[-max_seq_len:]

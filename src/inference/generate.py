@@ -12,6 +12,7 @@ from tokenizers import Tokenizer
 from src.data.format import (
     SPECIAL_TOKENS,
     build_system_prompt,
+    encode_formatted_text,
     extract_json_from_text,
     parse_action_json,
 )
@@ -54,8 +55,9 @@ def load_model_and_tokenizer(
     return model, tokenizer, dev
 
 
-def _encode(tokenizer: Tokenizer, text: str) -> torch.Tensor:
-    return torch.tensor([tokenizer.encode(text).ids], dtype=torch.long)
+def _encode(tokenizer: Tokenizer, text: str, *, max_seq_len: int = 512) -> torch.Tensor:
+    ids = encode_formatted_text(text, tokenizer, max_seq_len=max_seq_len)
+    return torch.tensor([ids], dtype=torch.long)
 
 
 def _decode(tokenizer: Tokenizer, ids: torch.Tensor) -> str:
@@ -71,7 +73,8 @@ def _generate_text(
     temperature: float = 0.0,
 ) -> str:
     eos_id = tokenizer.token_to_id(SPECIAL_TOKENS["eos"])
-    input_ids = _encode(tokenizer, prompt).to(device)
+    max_seq = getattr(model.cfg, "max_seq_len", 512)
+    input_ids = _encode(tokenizer, prompt, max_seq_len=max_seq).to(device)
     out = model.generate(input_ids, max_new_tokens=max_new_tokens, eos_id=eos_id, temperature=temperature)
     new_ids = out[0, input_ids.size(1) :]
     return tokenizer.decode(new_ids.tolist())
