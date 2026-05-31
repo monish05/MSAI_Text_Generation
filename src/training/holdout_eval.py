@@ -70,39 +70,39 @@ def evaluate_holdout(
         row_system = _extract_system(text)
         system_prompt = compact_system_for_inference(row_system, tool_schemas=schemas)
         raw, parsed = generate_tool_call(
-                model,
-                tokenizer,
-                tool_schemas=schemas,
-                question=q,
-                system_prompt=system_prompt,
-                device=device,
-                max_new_tokens=max_new_tokens,
-                temperature=temperature,
+            model,
+            tokenizer,
+            tool_schemas=schemas,
+            question=q,
+            system_prompt=system_prompt,
+            device=device,
+            max_new_tokens=max_new_tokens,
+            temperature=temperature,
+        )
+        total += 1
+        expected = (row.get("meta") or {}).get("action")
+        got = None
+        if parsed:
+            json_valid += 1
+            got = parsed.get("action") or (
+                parsed.get("actions", [{}])[0].get("action") if parsed.get("actions") else None
             )
-            total += 1
-            expected = (row.get("meta") or {}).get("action")
-            got = None
-            if parsed:
-                json_valid += 1
-                got = parsed.get("action") or (
-                    parsed.get("actions", [{}])[0].get("action") if parsed.get("actions") else None
-                )
-                if got and expected and got.lower() == expected.lower():
-                    action_match += 1
+            if got and expected and got.lower() == expected.lower():
+                action_match += 1
 
-            if log_failures is not None and len(failures) < max_log_samples:
-                ok_action = got and expected and got.lower() == expected.lower()
-                if not parsed or not ok_action:
-                    failures.append(
-                        {
-                            "question": q,
-                            "expected_action": expected,
-                            "got_action": got,
-                            "raw_output": raw[:500],
-                            "system_chars": len(system_prompt),
-                            "parsed": parsed,
-                        }
-                    )
+        if log_failures is not None and len(failures) < max_log_samples:
+            ok_action = got and expected and got.lower() == expected.lower()
+            if not parsed or not ok_action:
+                failures.append(
+                    {
+                        "question": q,
+                        "expected_action": expected,
+                        "got_action": got,
+                        "raw_output": raw[:500],
+                        "system_chars": len(system_prompt),
+                        "parsed": parsed,
+                    }
+                )
 
     if was_training:
         model.train()
