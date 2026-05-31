@@ -5,6 +5,8 @@ from __future__ import annotations
 
 import argparse
 import math
+import sys
+from functools import partial
 
 from tokenizers import Tokenizer
 from torch.utils.data import DataLoader
@@ -46,7 +48,11 @@ def main() -> None:
     seed = int(tcfg.get("seed", 42))
     batch_size = int(tcfg.get("batch_size", 128))
     num_workers = int(tcfg.get("num_workers", 4))
+    if sys.platform == "win32" and num_workers > 0:
+        print("Note: Windows uses num_workers=0 (multiprocessing spawn + tokenizer in dataset).")
+        num_workers = 0
     num_epochs = int(tcfg.get("num_epochs", 15))
+    collate_fn = partial(collate_batch, pad_id=pad_id)
     samples_per_epoch = int(tcfg.get("samples_per_epoch", 0))
     val_samples = int(tcfg.get("val_samples", 5000))
 
@@ -66,7 +72,7 @@ def main() -> None:
             seed=seed + 999,
             fixed_indices=build_fixed_val_indices(val_paths, weights, val_samples, seed + 999),
         )
-        val_loader = DataLoader(val_ds, batch_size=batch_size, shuffle=False, num_workers=num_workers, collate_fn=lambda b: collate_batch(b, pad_id))
+        val_loader = DataLoader(val_ds, batch_size=batch_size, shuffle=False, num_workers=num_workers, collate_fn=collate_fn)
 
     kiosk_val_loader = None
     kiosk_val_path = PROCESSED / "kiosk_val.jsonl"
@@ -85,11 +91,11 @@ def main() -> None:
             batch_size=batch_size,
             shuffle=False,
             num_workers=num_workers,
-            collate_fn=lambda b: collate_batch(b, pad_id),
+            collate_fn=collate_fn,
         )
 
     train_loader = DataLoader(
-        train_ds, batch_size=batch_size, shuffle=False, num_workers=num_workers, collate_fn=lambda b: collate_batch(b, pad_id)
+        train_ds, batch_size=batch_size, shuffle=False, num_workers=num_workers, collate_fn=collate_fn
     )
 
     mcfg = ModelConfig.from_dict(cfg, vocab_size=tokenizer.get_vocab_size())
