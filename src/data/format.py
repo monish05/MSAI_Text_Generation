@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 import re
-from typing import Any, Dict, List, Optional, Sequence, Tuple
+from typing import Any, Dict, List, Optional
 
 IGNORE_LABEL = -100
 
@@ -65,105 +65,29 @@ def format_training_text(
     return "".join(parts)
 
 
-def _assistant_content_spans(text: str) -> List[Tuple[int, int]]:
-    """Character spans to supervise: content after each <|assistant|> marker."""
-    marker = SPECIAL_TOKENS["assistant"]
-    boundaries = (
-        SPECIAL_TOKENS["user"],
-        SPECIAL_TOKENS["tool"],
-        SPECIAL_TOKENS["system"],
-        SPECIAL_TOKENS["eos"],
-    )
-    spans: List[Tuple[int, int]] = []
-    search_from = 0
-    while True:
-        idx = text.find(marker, search_from)
-        if idx == -1:
-            break
-        content_start = idx + len(marker)
-        content_end = len(text)
-        for bound in boundaries:
-            pos = text.find(bound, content_start)
-            if pos != -1:
-                content_end = min(content_end, pos)
-        if content_start < content_end:
-            spans.append((content_start, content_end))
-        search_from = content_start
-    return spans
+_MARKER_PATTERN = re.compile(
+    "(" + "|".join(re.escape(SPECIAL_TOKENS[k]) for k in ("system", "user", "assistant", "tool", "eos")) + ")"
+)
 
 
-def _char_in_spans(char_idx: int, spans: Sequence[Tuple[int, int]]) -> bool:
-    return any(start <= char_idx < end for start, end in spans)
-
-
-def _find_subsequence(haystack: Sequence[int], needle: Sequence[int]) -> List[int]:
-    if not needle or len(needle) > len(haystack):
-        return []
-    m = len(needle)
-    return [i for i in range(len(haystack) - m + 1) if list(haystack[i : i + m]) == list(needle)]
-
-
-def _labels_from_char_prefix(
-    ids: List[int],
-    text: str,
-    spans: Sequence[Tuple[int, int]],
-    tokenizer: Any,
-    n: int,
-) -> List[int]:
-    """Map char spans to token indices via encode(text[:pos]) lengths (works on Windows)."""
-    labels = [IGNORE_LABEL] * n
-    for content_start, content_end in spans:
-        tok_start = len(tokenizer.encode(text[:content_start]).ids)
-        tok_end = len(tokenizer.encode(text[:content_end]).ids)
-        tok_start = min(tok_start, n)
-        tok_end = min(tok_end, n)
-        for t in range(max(0, tok_start - 1), tok_end - 1):
-            if t < n - 1:
-                labels[t] = ids[t + 1]
-    return labels
-
-
-def _labels_from_marker_tokens(ids: List[int], tokenizer: Any) -> List[int]:
-    """Fallback when char offsets are missing (common on some Windows tokenizers)."""
-    n = len(ids)
-    labels = [IGNORE_LABEL] * n
-    asst = tokenizer.encode(SPECIAL_TOKENS["assistant"]).ids
-    if not asst:
-        return labels
-    boundaries = [
-        tokenizer.encode(SPECIAL_TOKENS[k]).ids
-        for k in ("user", "tool", "system", "eos")
-    ]
-    for st in _find_subsequence(ids, asst):
-        content_start = st + len(asst)
-        content_end = n
-        for bound in boundaries:
-            if not bound:
-                continue
-            for pos in _find_subsequence(ids[content_start:], bound):
-                content_end = min(content_end, content_start + pos)
-                break
-        for t in range(max(0, content_start - 1), min(n - 1, content_end - 1)):
-            labels[t] = ids[t + 1]
-    return labels
-
-
-def _labels_from_offsets(ids: List[int], spans: Sequence[Tuple[int, int]], offsets: Sequence) -> List[int]:
-    n = len(ids)
-    labels = [IGNORE_LABEL] * n
-    for t in range(n - 1):
-        if t + 1 >= len(offsets):
-            break
-        off = offsets[t + 1]
-        if off is None:
-            continue
-        start, end = off
-        if start is None or end is None:
-            continue
-        if end > start or start > 0:
-            if _char_in_spans(start, spans) or _char_in_spans(max(start, end - 1), spans):
-                labels[t] = ids[t + 1]
-    return labels
+def _append_tokens(
+    input_ids: List[int],
+    labels: List[int],
+    token_ids: List[int],
+    *,
+    supervise_content: bool,
+    max_seq_len: int,
+) -> bool:
+    """Append tokens; return False if max_seq_len reached."""
+    for j, tid in enumerate(token_ids):
+        if len(input_ids) >= max_seq_len:
+            return False
+        input_ids.append(tid)
+        if supervise_content and j + 1 < len(token_ids):
+            labels.append(token_ids[j + 1])
+        else:
+            labels.append(IGNORE_LABEL)
+    return True
 
 
 def build_training_labels(
@@ -172,25 +96,46 @@ def build_training_labels(
     *,
     max_seq_len: int = 512,
 ) -> Tuple[List[int], List[int]]:
-    """Next-token labels with loss only on <|assistant|> content spans."""
-    encoding = tokenizer.encode(text)
-    ids = list(encoding.ids[:max_seq_len])
-    n = len(ids)
-    if n == 0:
-        return [], []
+    """Next-token labels on <|assistant|> content only.
 
-    spans = _assistant_content_spans(text)
-    labels = _labels_from_char_prefix(ids, text, spans, tokenizer, n)
+    Encodes each marker and content chunk separately so labels align with
+    input_ids (full-string BPE + char offsets break on Windows).
+    """
+    parts = _MARKER_PATTERN.split(text)
+    input_ids: List[int] = []
+    labels: List[int] = []
+    idx = 0
 
-    if sum(1 for lb in labels if lb != IGNORE_LABEL) == 0:
-        offsets = getattr(encoding, "offsets", None)
-        if offsets is not None and len(offsets) >= n:
-            labels = _labels_from_offsets(ids, spans, offsets)
+    while idx < len(parts):
+        part = parts[idx]
+        if not part:
+            idx += 1
+            continue
+        if part not in SPECIAL_TOKENS.values():
+            if not _append_tokens(input_ids, labels, tokenizer.encode(part).ids, supervise_content=False, max_seq_len=max_seq_len):
+                break
+            idx += 1
+            continue
 
-    if sum(1 for lb in labels if lb != IGNORE_LABEL) == 0:
-        labels = _labels_from_marker_tokens(ids, tokenizer)
+        marker = part
+        content = parts[idx + 1] if idx + 1 < len(parts) else ""
+        idx += 2
+        supervise = marker == SPECIAL_TOKENS["assistant"]
 
-    return ids, labels
+        if not _append_tokens(
+            input_ids, labels, tokenizer.encode(marker).ids, supervise_content=False, max_seq_len=max_seq_len
+        ):
+            break
+        if content and not _append_tokens(
+            input_ids,
+            labels,
+            tokenizer.encode(content).ids,
+            supervise_content=supervise,
+            max_seq_len=max_seq_len,
+        ):
+            break
+
+    return input_ids, labels
 
 
 def action_to_json(action: str, arguments: Dict[str, Any]) -> str:
