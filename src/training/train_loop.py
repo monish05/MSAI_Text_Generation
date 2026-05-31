@@ -68,6 +68,7 @@ def train(
     weight_decay = float(tcfg.get("weight_decay", 0.01))
     warmup_steps = int(tcfg.get("warmup_steps", 500))
     grad_clip = float(tcfg.get("grad_clip", 1.0))
+    grad_accumulation_steps = max(1, int(tcfg.get("grad_accumulation_steps", 1)))
     eval_every_epochs = int(tcfg.get("eval_every_epochs", 1))
     holdout_eval_every_epochs = int(tcfg.get("holdout_eval_every_epochs", 1))
     plot_every_epochs = int(tcfg.get("plot_every_epochs", 1))
@@ -102,9 +103,12 @@ def train(
         epoch_batches = 0
 
         pbar = tqdm(train_loader, desc=f"epoch {epoch + 1}/{num_epochs}")
+        optimizer.zero_grad(set_to_none=True)
         for batch_idx, batch in enumerate(pbar):
-            for pg in optimizer.param_groups:
-                pg["lr"] = lr_at(global_step)
+            micro_step = batch_idx % grad_accumulation_steps
+            if micro_step == 0:
+                for pg in optimizer.param_groups:
+                    pg["lr"] = lr_at(global_step)
 
             input_ids = batch["input_ids"].to(device)
             labels = batch["labels"].to(device)
@@ -117,10 +121,16 @@ def train(
                 action_anchor_idx=action_anchor_idx,
             )
 
-            optimizer.zero_grad(set_to_none=True)
-            loss.backward()
-            torch.nn.utils.clip_grad_norm_(model.parameters(), grad_clip)
-            optimizer.step()
+            scaled_loss = loss / grad_accumulation_steps
+            scaled_loss.backward()
+
+            is_accum_step = (batch_idx + 1) % grad_accumulation_steps == 0
+            is_last_batch = batch_idx + 1 == len(train_loader)
+            if is_accum_step or is_last_batch:
+                torch.nn.utils.clip_grad_norm_(model.parameters(), grad_clip)
+                optimizer.step()
+                optimizer.zero_grad(set_to_none=True)
+                global_step += 1
 
             loss_val = loss.item()
             epoch_loss_sum += loss_val
@@ -128,7 +138,6 @@ def train(
             if action_loss is not None:
                 epoch_action_loss_sum += action_loss.item()
                 epoch_action_batches += 1
-            global_step += 1
 
             if batch_idx % log_every == 0:
                 postfix = {"loss": f"{loss_val:.4f}", "lr": f"{lr_at(global_step):.2e}"}

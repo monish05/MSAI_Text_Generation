@@ -57,6 +57,7 @@ def main() -> None:
         print("Note: Windows uses num_workers=0 (multiprocessing spawn + tokenizer in dataset).")
         num_workers = 0
     num_epochs = int(tcfg.get("num_epochs", 15))
+    grad_accum = max(1, int(tcfg.get("grad_accumulation_steps", 1)))
     collate_fn = partial(collate_batch, pad_id=pad_id)
     samples_per_epoch = int(tcfg.get("samples_per_epoch", 0))
     val_samples = int(tcfg.get("val_samples", 5000))
@@ -136,7 +137,9 @@ def main() -> None:
     print(
         f"device={device} epochs={num_epochs} start_epoch={start_epoch + 1} "
         f"samples/epoch={samples_per_epoch} "
-        f"steps/epoch={math.ceil(samples_per_epoch / batch_size)} batch={batch_size} "
+        f"micro_batch={batch_size} grad_accum={grad_accum} "
+        f"effective_batch={batch_size * grad_accum} "
+        f"opt_steps/epoch={math.ceil(samples_per_epoch / (batch_size * grad_accum))} "
         f"vocab={mcfg.vocab_size} action_classes={mcfg.num_action_classes} "
         f"action_loss_weight={mcfg.action_loss_weight}"
     )
