@@ -11,6 +11,7 @@ import torch
 from torch.utils.data import Dataset
 
 from src.data.format import SPECIAL_TOKENS, build_training_labels
+from src.data.kiosk_actions import IGNORE_ACTION_LABEL, action_meta_to_label
 
 IndexEntry = Tuple[str, int]
 
@@ -99,8 +100,6 @@ class MixedDataset(Dataset):
 
         action_label = IGNORE_ACTION_LABEL
         if source == "kiosk":
-            from src.data.kiosk_actions import action_meta_to_label
-
             action_label = action_meta_to_label(row.get("meta") or {})
             if action_label < 0 or action_anchor is None:
                 action_label = IGNORE_ACTION_LABEL
