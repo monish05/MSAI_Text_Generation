@@ -20,15 +20,15 @@ SLOTS_PATH = Path(__file__).resolve().parent / "kiosk_slots.json"
 TEMPLATES_PATH = Path(__file__).resolve().parent / "kiosk_templates.yaml"
 
 ACTION_WEIGHTS = {
-    "lookup_person": 400,
-    "lookup_location": 400,
-    "lookup_office_hours": 500,
-    "lookup_faculty_topic": 250,
-    "lookup_center": 200,
-    "lookup_advisorship": 200,
-    "lookup_staff_support": 150,
-    "list_events": 150,
-    "noop": 200,
+    "lookup_person": 350,
+    "lookup_location": 350,
+    "lookup_office_hours": 450,
+    "lookup_faculty_topic": 220,
+    "lookup_center": 180,
+    "lookup_advisorship": 180,
+    "lookup_staff_support": 130,
+    "list_events": 130,
+    "noop": 400,
 }
 
 

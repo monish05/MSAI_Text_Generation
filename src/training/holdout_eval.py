@@ -1,4 +1,4 @@
-"""Kiosk holdout evaluation (action match + JSON validity)."""
+"""Kiosk holdout evaluation with honest LM vs fallback metrics."""
 
 from __future__ import annotations
 
@@ -10,7 +10,7 @@ import torch
 from tokenizers import Tokenizer
 from tqdm import tqdm
 
-from src.data.format import compact_system_for_inference
+from src.data.format import arguments_match, compact_system_for_inference, parsed_action_name
 from src.inference.generate import generate_tool_call
 from src.model import DecoderOnlyTransformer
 from src.paths import PROCESSED, ROOT
@@ -27,7 +27,6 @@ def _extract_question(text: str) -> Optional[str]:
 
 
 def _extract_system(text: str) -> Optional[str]:
-    """System JSON blob from a training row (matches what the model saw in shards)."""
     if "<|system|>" not in text or "<|user|>" not in text:
         return None
     return text.split("<|system|>", 1)[1].split("<|user|>", 1)[0].strip()
@@ -40,8 +39,10 @@ def evaluate_holdout(
     *,
     holdout_path: Path = HOLDOUT_PATH,
     schemas_path: Path = SCHEMAS_PATH,
-    max_new_tokens: int = 128,
+    max_new_tokens: int = 64,
     temperature: float = 0.0,
+    action_head_confidence: float = 1.0,
+    use_hybrid: bool = False,
     log_failures: Optional[Path] = None,
     max_log_samples: int = 5,
     max_samples: Optional[int] = None,
@@ -53,7 +54,9 @@ def evaluate_holdout(
     was_training = model.training
     model.eval()
 
-    total = json_valid = action_match = 0
+    total = 0
+    lm_json_valid = lm_action_match = args_match = fallback_count = 0
+    final_json_valid = final_action_match = 0
     failures: List[dict] = []
 
     with open(holdout_path, encoding="utf-8") as f:
@@ -67,9 +70,13 @@ def evaluate_holdout(
         q = _extract_question(text)
         if not q:
             continue
+        meta = row.get("meta") or {}
+        expected = meta.get("action")
+        expected_args = meta.get("arguments") or {}
         row_system = _extract_system(text)
         system_prompt = compact_system_for_inference(row_system, tool_schemas=schemas)
-        raw, parsed = generate_tool_call(
+
+        result = generate_tool_call(
             model,
             tokenizer,
             tool_schemas=schemas,
@@ -78,29 +85,49 @@ def evaluate_holdout(
             device=device,
             max_new_tokens=max_new_tokens,
             temperature=temperature,
+            action_head_confidence=action_head_confidence,
+            use_hybrid=use_hybrid,
+            use_slot_filler=False,
+            expected_action=expected,
         )
         total += 1
-        expected = (row.get("meta") or {}).get("action")
-        got = None
-        if parsed:
-            json_valid += 1
-            got = parsed.get("action") or (
-                parsed.get("actions", [{}])[0].get("action") if parsed.get("actions") else None
-            )
+
+        if result.lm_parsed is not None:
+            lm_json_valid += 1
+            lm_got = parsed_action_name(result.lm_parsed)
+            if lm_got and expected and lm_got.lower() == expected.lower():
+                lm_action_match += 1
+            lm_args = result.lm_parsed.get("arguments")
+            if arguments_match(lm_args if isinstance(lm_args, dict) else {}, expected_args):
+                args_match += 1
+
+        if result.used_fallback:
+            fallback_count += 1
+
+        if result.parsed is not None:
+            final_json_valid += 1
+            got = parsed_action_name(result.parsed)
             if got and expected and got.lower() == expected.lower():
-                action_match += 1
+                final_action_match += 1
 
         if log_failures is not None and len(failures) < max_log_samples:
+            got = parsed_action_name(result.parsed)
             ok_action = got and expected and got.lower() == expected.lower()
-            if not parsed or not ok_action:
+            if result.lm_parsed is None or not ok_action:
                 failures.append(
                     {
                         "question": q,
                         "expected_action": expected,
+                        "expected_arguments": expected_args,
                         "got_action": got,
-                        "raw_output": raw[:500],
-                        "system_chars": len(system_prompt),
-                        "parsed": parsed,
+                        "lm_text": result.lm_text[:500],
+                        "lm_parsed": result.lm_parsed,
+                        "raw_output": result.raw_json[:500],
+                        "parsed": result.parsed,
+                        "used_fallback": result.used_fallback,
+                        "args_source": result.args_source,
+                        "head_action": result.head_action,
+                        "head_conf": result.head_conf,
                     }
                 )
 
@@ -117,8 +144,15 @@ def evaluate_holdout(
         raise ValueError(
             f"No holdout rows with <|user|> in {holdout_path} — re-run preprocess / kiosk split."
         )
+
     return {
         "total": total,
-        "json_valid_rate": json_valid / total,
-        "action_match_rate": action_match / total,
+        "lm_json_valid_rate": lm_json_valid / total,
+        "lm_action_match_rate": lm_action_match / total,
+        "args_match_rate": args_match / total,
+        "fallback_rate": fallback_count / total,
+        "final_json_valid_rate": final_json_valid / total,
+        "action_match_rate": final_action_match / total,
+        # Legacy aliases
+        "json_valid_rate": final_json_valid / total,
     }

@@ -255,8 +255,18 @@ def actions_to_json(actions: List[Dict[str, Any]]) -> str:
     return json.dumps({"actions": actions}, ensure_ascii=False)
 
 
+def normalize_lm_json(text: str) -> str:
+    """Best-effort cleanup of LM output before JSON parse (inference only)."""
+    if not text:
+        return text
+    text = text.replace("\u0120", " ").replace("Ġ", " ")
+    text = re.sub(r'"\s+([^"]+?)\s+"\s*:', r'"\1":', text)
+    text = re.sub(r":\s+\"", r': "', text)
+    return text.strip()
+
+
 def extract_json_from_text(text: str) -> Optional[str]:
-    text = text.strip()
+    text = normalize_lm_json(text)
     if text.startswith("{") and text.endswith("}"):
         return text
     start = text.find("{")
@@ -274,6 +284,39 @@ def parse_action_json(text: str) -> Optional[Dict[str, Any]]:
         return json.loads(candidate)
     except json.JSONDecodeError:
         return None
+
+
+def arguments_match(got: Optional[Dict[str, Any]], expected: Optional[Dict[str, Any]]) -> bool:
+    """True if got arguments cover all expected keys with matching values."""
+    if expected is None:
+        expected = {}
+    if got is None:
+        got = {}
+    if not expected:
+        return True
+    if not isinstance(got, dict) or not isinstance(expected, dict):
+        return False
+    for key, exp_val in expected.items():
+        got_val = got.get(key)
+        if got_val is None:
+            return False
+        if isinstance(exp_val, str) and isinstance(got_val, str):
+            if exp_val.strip().lower() != got_val.strip().lower():
+                return False
+        elif got_val != exp_val:
+            return False
+    return True
+
+
+def parsed_action_name(parsed: Optional[Dict[str, Any]]) -> Optional[str]:
+    if not parsed:
+        return None
+    if parsed.get("action"):
+        return str(parsed["action"])
+    actions = parsed.get("actions")
+    if isinstance(actions, list) and actions and isinstance(actions[0], dict):
+        return actions[0].get("action")
+    return None
 
 
 def xlam_answers_to_action_json(answers_raw: str) -> Optional[str]:

@@ -29,6 +29,9 @@ METRICS_COLUMNS = [
     "train_action_loss",
     "holdout_action_acc",
     "holdout_json_valid",
+    "holdout_lm_json_valid",
+    "holdout_args_match",
+    "holdout_fallback_rate",
     "global_step",
 ]
 
@@ -54,6 +57,10 @@ def train(
     checkpoint_dir: Path,
     tokenizer: Optional[Tokenizer] = None,
     kiosk_val_loader: Optional[DataLoader] = None,
+    optimizer: Optional[torch.optim.Optimizer] = None,
+    start_epoch: int = 0,
+    global_step: int = 0,
+    resume_metrics: bool = False,
 ) -> None:
     tcfg = cfg.get("training", {})
     num_epochs = int(tcfg.get("num_epochs", 10))
@@ -66,23 +73,27 @@ def train(
     plot_every_epochs = int(tcfg.get("plot_every_epochs", 1))
     log_every = int(tcfg.get("log_every", 50))
 
-    optimizer = torch.optim.AdamW(model.parameters(), lr=lr, weight_decay=weight_decay)
+    optimizer = optimizer or torch.optim.AdamW(model.parameters(), lr=lr, weight_decay=weight_decay)
     model.to(device)
 
     checkpoint_dir.mkdir(parents=True, exist_ok=True)
     metrics_path = checkpoint_dir / "metrics.csv"
     plots_dir = checkpoint_dir / "plots"
-    _init_metrics_csv(metrics_path)
+    if resume_metrics and metrics_path.exists():
+        pass
+    else:
+        _init_metrics_csv(metrics_path)
 
     best_val = float("inf")
-    global_step = 0
+    best_holdout_score = float("-inf")
+    best_checkpoint_metric = str(tcfg.get("best_checkpoint_metric", "holdout_composite"))
 
     def lr_at(step: int) -> float:
         if step < warmup_steps:
             return lr * (step + 1) / max(warmup_steps, 1)
         return lr
 
-    for epoch in range(num_epochs):
+    for epoch in range(start_epoch, num_epochs):
         train_ds.set_epoch(epoch)
         model.train()
         epoch_loss_sum = 0.0
@@ -136,6 +147,9 @@ def train(
         kiosk_val_action_acc: Optional[float] = None
         holdout_action_acc: Optional[float] = None
         holdout_json_valid: Optional[float] = None
+        holdout_lm_json_valid: Optional[float] = None
+        holdout_args_match: Optional[float] = None
+        holdout_fallback_rate: Optional[float] = None
 
         if val_loader and (epoch + 1) % eval_every_epochs == 0:
             val_loss, val_token_acc, _ = _eval_epoch_metrics(model, val_loader, device)
@@ -143,7 +157,7 @@ def train(
             if val_loss < best_val:
                 best_val = val_loss
                 _save_checkpoint(
-                    checkpoint_dir / "best.pt",
+                    checkpoint_dir / "best_val.pt",
                     model,
                     cfg,
                     epoch=epoch,
@@ -182,9 +196,28 @@ def train(
             and (epoch + 1) % holdout_eval_every_epochs == 0
             and HOLDOUT_PATH.exists()
         ):
-            holdout_action_acc, holdout_json_valid = _run_holdout_eval(
-                model, tokenizer, device, epoch + 1, checkpoint_dir
+            holdout_action_acc, holdout_json_valid, holdout_lm_json_valid, holdout_args_match, holdout_fallback_rate = (
+                _run_holdout_eval(model, tokenizer, device, epoch + 1, checkpoint_dir)
             )
+            holdout_score = _holdout_checkpoint_score(
+                best_checkpoint_metric,
+                holdout_lm_json_valid,
+                holdout_args_match,
+                holdout_action_acc,
+            )
+            if holdout_score is not None and holdout_score > best_holdout_score:
+                best_holdout_score = holdout_score
+                _save_checkpoint(
+                    checkpoint_dir / "best.pt",
+                    model,
+                    cfg,
+                    epoch=epoch,
+                    global_step=global_step,
+                    train_loss=train_loss,
+                    val_loss=val_loss,
+                    holdout_score=holdout_score,
+                )
+                tqdm.write(f"epoch {epoch + 1} new best holdout score={holdout_score:.4f} -> best.pt")
 
         _save_checkpoint(
             checkpoint_dir / "last.pt",
@@ -194,6 +227,7 @@ def train(
             global_step=global_step,
             train_loss=train_loss,
             val_loss=val_loss,
+            optimizer=optimizer,
         )
         _append_metrics(
             metrics_path,
@@ -207,6 +241,9 @@ def train(
             train_action_loss,
             holdout_action_acc,
             holdout_json_valid,
+            holdout_lm_json_valid,
+            holdout_args_match,
+            holdout_fallback_rate,
             global_step,
         )
 
@@ -223,13 +260,32 @@ def train(
             shutil.copy(last, checkpoint_dir / "best.pt")
 
 
+def _holdout_checkpoint_score(
+    metric: str,
+    lm_json_valid: Optional[float],
+    args_match: Optional[float],
+    action_acc: Optional[float],
+) -> Optional[float]:
+    if metric == "holdout_composite":
+        if lm_json_valid is None or args_match is None:
+            return None
+        return lm_json_valid + args_match
+    if metric == "holdout_lm_json_valid":
+        return lm_json_valid
+    if metric == "holdout_args_match":
+        return args_match
+    if metric == "holdout_action_acc":
+        return action_acc
+    return None
+
+
 def _run_holdout_eval(
     model: DecoderOnlyTransformer,
     tokenizer: Tokenizer,
     device: torch.device,
     epoch_num: int,
     checkpoint_dir: Path,
-) -> Tuple[Optional[float], Optional[float]]:
+) -> Tuple[Optional[float], Optional[float], Optional[float], Optional[float], Optional[float]]:
     from src.training.holdout_eval import evaluate_holdout
 
     holdout = evaluate_holdout(
@@ -237,14 +293,22 @@ def _run_holdout_eval(
         tokenizer,
         device,
         temperature=0.0,
-        max_new_tokens=128,
+        max_new_tokens=64,
+        action_head_confidence=1.0,
+        use_hybrid=False,
         log_failures=checkpoint_dir / f"holdout_failures_epoch{epoch_num}.jsonl",
         max_log_samples=5,
     )
     action_acc = holdout["action_match_rate"]
-    json_valid = holdout["json_valid_rate"]
-    tqdm.write(f"epoch {epoch_num} holdout action_acc={action_acc:.4f} json_valid={json_valid:.4f}")
-    return action_acc, json_valid
+    json_valid = holdout["final_json_valid_rate"]
+    lm_json_valid = holdout["lm_json_valid_rate"]
+    args_match = holdout["args_match_rate"]
+    fallback_rate = holdout["fallback_rate"]
+    tqdm.write(
+        f"epoch {epoch_num} holdout action_acc={action_acc:.4f} json_valid={json_valid:.4f} "
+        f"lm_json_valid={lm_json_valid:.4f} args_match={args_match:.4f} fallback={fallback_rate:.4f}"
+    )
+    return action_acc, json_valid, lm_json_valid, args_match, fallback_rate
 
 
 def _save_training_curves(metrics_path: Path, plots_dir: Path) -> None:
@@ -327,19 +391,23 @@ def _save_checkpoint(
     global_step: int,
     train_loss: float,
     val_loss: Optional[float],
+    holdout_score: Optional[float] = None,
+    optimizer: Optional[torch.optim.Optimizer] = None,
 ) -> None:
-    torch.save(
-        {
-            "model_state": model.state_dict(),
-            "model_config": model.cfg.__dict__,
-            "train_config": cfg,
-            "epoch": epoch,
-            "global_step": global_step,
-            "train_loss": train_loss,
-            "val_loss": val_loss,
-        },
-        path,
-    )
+    payload = {
+        "model_state": model.state_dict(),
+        "model_config": model.cfg.__dict__,
+        "train_config": cfg,
+        "epoch": epoch,
+        "global_step": global_step,
+        "train_loss": train_loss,
+        "val_loss": val_loss,
+    }
+    if holdout_score is not None:
+        payload["holdout_score"] = holdout_score
+    if optimizer is not None:
+        payload["optimizer_state"] = optimizer.state_dict()
+    torch.save(payload, path)
 
 
 def _init_metrics_csv(path: Path) -> None:
@@ -359,6 +427,9 @@ def _append_metrics(
     train_action_loss: Optional[float],
     holdout_action_acc: Optional[float],
     holdout_json_valid: Optional[float],
+    holdout_lm_json_valid: Optional[float],
+    holdout_args_match: Optional[float],
+    holdout_fallback_rate: Optional[float],
     global_step: int,
 ) -> None:
     with open(path, "a", newline="", encoding="utf-8") as f:
@@ -374,6 +445,9 @@ def _append_metrics(
                 train_action_loss if train_action_loss is not None else "",
                 holdout_action_acc if holdout_action_acc is not None else "",
                 holdout_json_valid if holdout_json_valid is not None else "",
+                holdout_lm_json_valid if holdout_lm_json_valid is not None else "",
+                holdout_args_match if holdout_args_match is not None else "",
+                holdout_fallback_rate if holdout_fallback_rate is not None else "",
                 global_step,
             ]
         )

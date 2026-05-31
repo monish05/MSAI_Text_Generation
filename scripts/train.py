@@ -7,7 +7,9 @@ import argparse
 import math
 import sys
 from functools import partial
+from pathlib import Path
 
+import torch
 from tokenizers import Tokenizer
 from torch.utils.data import DataLoader
 
@@ -30,12 +32,14 @@ from src.training.train_loop import _resolve_device, train  # noqa: E402
 
 def main() -> None:
     parser = argparse.ArgumentParser()
+    parser.add_argument("--config", type=Path, default=None, help="Training config YAML")
+    parser.add_argument("--resume", type=Path, default=None, help="Resume from last.pt checkpoint")
     parser.add_argument("--epochs", type=int, default=None)
     parser.add_argument("--samples-per-epoch", type=int, default=None)
     parser.add_argument("--batch-size", type=int, default=None)
     args = parser.parse_args()
 
-    cfg = load_config()
+    cfg = load_config(args.config)
     tcfg = cfg.setdefault("training", {})
     for key, val in (("num_epochs", args.epochs), ("samples_per_epoch", args.samples_per_epoch), ("batch_size", args.batch_size)):
         if val is not None:
@@ -104,14 +108,40 @@ def main() -> None:
     mcfg.num_action_classes = num_action_classes()
     device = _resolve_device(tcfg.get("device", "cuda"))
 
+    start_epoch = 0
+    global_step = 0
+    optimizer = None
+    resume_metrics = False
+    model = DecoderOnlyTransformer(mcfg)
+
+    if args.resume:
+        resume_path = args.resume if args.resume.is_absolute() else ROOT / args.resume
+        try:
+            ckpt = torch.load(resume_path, map_location="cpu", weights_only=False)
+        except TypeError:
+            ckpt = torch.load(resume_path, map_location="cpu")
+        model.load_state_dict(ckpt["model_state"], strict=False)
+        start_epoch = int(ckpt.get("epoch", -1)) + 1
+        global_step = int(ckpt.get("global_step", 0))
+        lr = float(tcfg.get("lr", 3e-4))
+        weight_decay = float(tcfg.get("weight_decay", 0.01))
+        optimizer = torch.optim.AdamW(model.parameters(), lr=lr, weight_decay=weight_decay)
+        if "optimizer_state" in ckpt:
+            optimizer.load_state_dict(ckpt["optimizer_state"])
+        resume_metrics = True
+        print(f"Resuming from {resume_path} at epoch {start_epoch + 1}, global_step={global_step}")
+        if "holdout_score" in ckpt:
+            print(f"Previous best holdout_score={ckpt['holdout_score']}")
+
     print(
-        f"device={device} epochs={num_epochs} samples/epoch={samples_per_epoch} "
+        f"device={device} epochs={num_epochs} start_epoch={start_epoch + 1} "
+        f"samples/epoch={samples_per_epoch} "
         f"steps/epoch={math.ceil(samples_per_epoch / batch_size)} batch={batch_size} "
         f"vocab={mcfg.vocab_size} action_classes={mcfg.num_action_classes} "
         f"action_loss_weight={mcfg.action_loss_weight}"
     )
     train(
-        DecoderOnlyTransformer(mcfg),
+        model,
         train_ds,
         train_loader,
         val_loader,
@@ -120,6 +150,10 @@ def main() -> None:
         checkpoint_dir=ROOT / "checkpoints",
         tokenizer=tokenizer,
         kiosk_val_loader=kiosk_val_loader,
+        optimizer=optimizer,
+        start_epoch=start_epoch,
+        global_step=global_step,
+        resume_metrics=resume_metrics,
     )
 
 

@@ -42,7 +42,10 @@ def main() -> None:
     if not args.skip_tokenizer:
         train_tokenizer(cfg)
 
-    print("Done. Submit training: sbatch slurm/quest_train_msai.sh")
+    print("Done. Next steps (Quest GPU interactive):")
+    print("  python scripts/debug_labels.py")
+    print("  python scripts/eval.py --checkpoint checkpoints/best.pt --device cuda")
+    print("  python scripts/train.py --config configs/train_quest.yaml")
 
 
 if __name__ == "__main__":

@@ -23,12 +23,16 @@ def main() -> None:
     args = parser.parse_args()
 
     model, tokenizer, device = load_model_and_tokenizer(args.checkpoint, ROOT / "tokenizer", args.device)
-    report = evaluate_holdout(model, tokenizer, device)
+    report = evaluate_holdout(model, tokenizer, device, action_head_confidence=1.0, use_hybrid=False)
     report["checkpoint"] = str(args.checkpoint)
 
     out = ROOT / "checkpoints" / "eval_report.json"
     out.write_text(json.dumps(report, indent=2), encoding="utf-8")
     print(json.dumps(report, indent=2))
+    print(
+        f"\nHonest baseline: lm_json_valid={report['lm_json_valid_rate']:.3f} "
+        f"args_match={report['args_match_rate']:.3f} fallback={report['fallback_rate']:.3f}"
+    )
 
 
 if __name__ == "__main__":

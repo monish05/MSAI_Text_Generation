@@ -9,7 +9,7 @@ Decoder-only Transformer for Northwestern CS Kiosk tool calling.
 | 1. Synthetic raw | Laptop (kiosk repo) | `python scripts/generate_synthetic.py` |
 | 2. Sync | Laptop | `rsync -av data/kiosk_synthetic/ quest:~/MSAI_Text_Generation/data/kiosk_synthetic/` |
 | 3. Preprocess | Quest login | `python scripts/preprocess.py` |
-| 4. Train | Quest GPU | `sbatch slurm/quest_train_msai.sh` |
+| 4. Train | Quest GPU | `python scripts/train.py --config configs/train_quest.yaml` |
 
 ## Setup
 
@@ -41,7 +41,7 @@ Quality gates: gold facts from `ToolExecutor`, retries on empty results, name/qu
 **Regenerate** after template or generator changes (old `raw.jsonl` is not compatible):
 
 ```bash
-python scripts/generate_synthetic.py --n 3000
+python scripts/generate_synthetic.py --n 5000
 ```
 
 Outputs: `data/kiosk_synthetic/raw.jsonl` → HPC split to `data/processed/kiosk_{train,val,holdout}.jsonl`.
@@ -54,8 +54,8 @@ Config knobs in `configs/train.yaml` under `synthetic:`.
 |--------|-------|
 | `generate_synthetic.py` | Laptop — raw JSONL |
 | `preprocess.py` | HPC login — split + corpora + tokenizer |
-| `train.py` | HPC GPU (via SLURM) |
-| `eval.py` / `generate.py` | Inference |
+| `train.py` | HPC GPU — training |
+| `eval.py` / `chat.py` / `kiosk_demo.py` | Inference / demo |
 
 ## Training outputs (gitignored)
 
@@ -63,14 +63,35 @@ Config knobs in `configs/train.yaml` under `synthetic:`.
 
 Training uses **next-token prediction** with loss only on `<|assistant|>` spans. Holdout eval uses **greedy** decoding (`temperature=0`).
 
-### Retrain on Quest (after label fix)
+### Quest interactive training
 
 ```bash
-# Backup old run for comparison
-mv checkpoints checkpoints_old_$(date +%Y%m%d) 2>/dev/null || true
+module load mamba/24.3.0 && conda activate genai
+cd ~/MSAI_Text_Generation
 
-# Sync code, then:
-INSTALL_DEPS=0 sbatch slurm/quest_train_msai.sh
+python scripts/preprocess.py
+python scripts/debug_labels.py
+
+# Honest baseline (optional, before retrain)
+python scripts/eval.py --checkpoint checkpoints/best.pt --device cuda
+
+# Main retrain (30 epochs, 12L/512d)
+python scripts/train.py --config configs/train_quest.yaml
+
+# Resume after interrupt
+python scripts/train.py --config configs/train_quest.yaml --resume checkpoints/last.pt
+
+# Optional kiosk-only fine-tune (5 epochs)
+python scripts/train.py --config configs/train_quest_kiosk_ft.yaml --resume checkpoints/last.pt
+
+# Monitor / debug
+python scripts/debug_lm_output.py --checkpoint checkpoints/last.pt --device cuda --n 5 --args-check
 ```
 
-Healthy curves: gradual loss decrease, holdout JSON valid &gt; 0 before action acc rises. See `checkpoints/holdout_failures_epoch*.jsonl` for sample errors.
+### Windows demo (after copying `checkpoints/best.pt` + `tokenizer/`)
+
+```powershell
+python scripts/kiosk_demo.py --checkpoint checkpoints/best.pt --device cuda
+```
+
+Healthy curves: gradual loss decrease, `holdout_lm_json_valid` and `holdout_args_match` rising in `checkpoints/metrics.csv`. See `checkpoints/holdout_failures_epoch*.jsonl` for sample errors.

@@ -36,15 +36,16 @@ training:
   warmup_steps: 1000
   grad_clip: 1.0
   eval_every_epochs: 1
-  holdout_eval_every_epochs: 1   # 0 = skip holdout during training (faster)
-  action_loss_weight: 0.2         # kiosk-only auxiliary tool-selection CE
+  holdout_eval_every_epochs: 1
+  action_loss_weight: 0.2
+  best_checkpoint_metric: holdout_composite
   plot_every_epochs: 1
   log_every: 50
   device: cuda
   seed: 42
 
 synthetic:
-  n_total: 3000
+  n_total: 5000
   n_holdout: 200
   val_ratio: 0.1
   multi_turn_ratio: 0.22

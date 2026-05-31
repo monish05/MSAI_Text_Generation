@@ -59,22 +59,26 @@ def main() -> None:
             row_system = _extract_system(text)
             system_prompt = compact_system_for_inference(row_system, tool_schemas=schemas)
             expected = (row.get("meta") or {}).get("action")
-            raw, parsed = generate_tool_call(
+            result = generate_tool_call(
                 model,
                 tokenizer,
                 tool_schemas=schemas,
                 question=q or "",
                 system_prompt=system_prompt,
                 device=device,
-                max_new_tokens=128,
+                max_new_tokens=64,
                 temperature=0.0,
+                action_head_confidence=1.0,
+                use_hybrid=False,
             )
             print(f"\n--- holdout sample {i + 1} ---")
             print(f"question: {q!r}")
             print(f"expected_action: {expected}")
             print(f"row_system_chars: {len(row_system or '')} compact_system_chars: {len(system_prompt)}")
-            print(f"raw_output: {raw!r}")
-            print(f"parsed: {parsed}")
+            print(f"lm_text: {result.lm_text!r}")
+            print(f"raw_output: {result.raw_json!r}")
+            print(f"parsed: {result.parsed}")
+            print(f"used_fallback: {result.used_fallback}")
 
     if args.full_eval:
         limit = args.eval_limit

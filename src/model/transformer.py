@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import math
-from typing import Optional, Tuple
+from typing import Any, Callable, Optional, Tuple
 
 import torch
 import torch.nn as nn
@@ -164,19 +164,73 @@ class DecoderOnlyTransformer(nn.Module):
         max_new_tokens: int,
         eos_id: Optional[int] = None,
         temperature: float = 1.0,
+        *,
+        repetition_penalty: float = 1.0,
+        stop_on_json_close: bool = False,
+        decode_fn: Optional[Callable[[list[int]], str]] = None,
     ) -> torch.Tensor:
         self.eval()
+        prompt_len = input_ids.size(1)
+        generated: list[int] = []
+        saw_open_brace = False
+
         for _ in range(max_new_tokens):
             ctx = input_ids[:, -self.cfg.max_seq_len :]
             logits, _, _ = self(ctx)
-            logits = logits[:, -1, :]
+            logits = logits[:, -1, :].clone()
+
+            if repetition_penalty and repetition_penalty > 1.0 and generated:
+                recent = set(generated[-32:])
+                for tok in recent:
+                    if logits[0, tok] > 0:
+                        logits[0, tok] /= repetition_penalty
+                    else:
+                        logits[0, tok] *= repetition_penalty
+
             if temperature is not None and temperature <= 0:
                 next_id = logits.argmax(dim=-1, keepdim=True)
             else:
                 logits = logits / max(temperature or 1.0, 1e-6)
                 probs = F.softmax(logits, dim=-1)
                 next_id = torch.multinomial(probs, num_samples=1)
+
+            tid = int(next_id.item())
+            generated.append(tid)
             input_ids = torch.cat([input_ids, next_id], dim=1)
-            if eos_id is not None and (next_id == eos_id).all():
+
+            if eos_id is not None and tid == eos_id:
                 break
+
+            if stop_on_json_close and decode_fn is not None:
+                new_text = decode_fn(input_ids[0, prompt_len:].tolist())
+                if "{" in new_text:
+                    saw_open_brace = True
+                if saw_open_brace and _json_object_closed(new_text):
+                    break
+
         return input_ids
+
+
+def _json_object_closed(text: str) -> bool:
+    depth = 0
+    in_string = False
+    escape = False
+    for ch in text:
+        if escape:
+            escape = False
+            continue
+        if ch == "\\" and in_string:
+            escape = True
+            continue
+        if ch == '"':
+            in_string = not in_string
+            continue
+        if in_string:
+            continue
+        if ch == "{":
+            depth += 1
+        elif ch == "}":
+            depth -= 1
+            if depth == 0:
+                return True
+    return False

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Dict
+from typing import Dict, Optional
 
 ROOT = Path(__file__).resolve().parents[1]
 SRC = ROOT / "src"
@@ -15,10 +15,11 @@ CONFIG_PATH = ROOT / "configs" / "train.yaml"
 TRAIN_SHARDS = ("xlam", "glaive", "toolbench", "alpaca", "kiosk")
 
 
-def load_config() -> dict:
+def load_config(path: Optional[Path] = None) -> dict:
     import yaml
 
-    with open(CONFIG_PATH, encoding="utf-8") as f:
+    cfg_path = path or CONFIG_PATH
+    with open(cfg_path, encoding="utf-8") as f:
         return yaml.safe_load(f)
 
 

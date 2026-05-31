@@ -1,0 +1,63 @@
+# Quest H100 retrain config (80GB) — larger model, kiosk-focused mix
+paths:
+  data_raw: data
+  kiosk_synthetic: data/kiosk_synthetic
+  kiosk_repo: ../kiosk
+  kiosk_archive: ../kiosk/Archive
+
+mix_weights:
+  kiosk: 0.55
+  toolbench: 0.20
+  alpaca: 0.15
+  xlam: 0.05
+  glaive: 0.05
+
+model:
+  d_model: 512
+  n_heads: 8
+  n_layers: 12
+  d_ff: 2048
+  max_seq_len: 512
+  dropout: 0.1
+  num_action_classes: 9
+
+tokenizer:
+  vocab_size: 12000
+  min_frequency: 2
+
+training:
+  num_epochs: 30
+  samples_per_epoch: 0
+  val_samples: 5000
+  batch_size: 256
+  num_workers: 4
+  lr: 2.0e-4
+  weight_decay: 0.01
+  warmup_steps: 1500
+  grad_clip: 1.0
+  eval_every_epochs: 1
+  holdout_eval_every_epochs: 1
+  action_loss_weight: 0.08
+  best_checkpoint_metric: holdout_composite
+  plot_every_epochs: 1
+  log_every: 50
+  device: cuda
+  seed: 42
+
+synthetic:
+  n_total: 5000
+  n_holdout: 200
+  val_ratio: 0.1
+  multi_turn_ratio: 0.22
+  ambiguous_ratio: 0.08
+  multi_tool_ratio: 0.08
+  seed: 42
+  max_retries: 3
+  name_repeat_window: 40
+  prefix_prob: 0.12
+
+converter_limits:
+  xlam: 0
+  glaive: 0
+  toolbench: 50000
+  alpaca: 52000
