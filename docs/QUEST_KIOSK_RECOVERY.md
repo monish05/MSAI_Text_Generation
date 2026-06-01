@@ -63,3 +63,5 @@ pip install -r requirements-lora.txt
 python scripts/train_lora.py --config configs/train_lora_kiosk.yaml
 python scripts/eval.py --backend lora --checkpoint checkpoints/lora_kiosk --device cuda
 ```
+
+If eval prints `WARNING: LoRA adapter has no saved embed_tokens/lm_head weights`, the adapter was trained before `modules_to_save` — **re-run `train_lora.py`** (5 epochs) so special-token embeddings are saved with the adapter.

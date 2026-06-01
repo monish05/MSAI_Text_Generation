@@ -21,33 +21,9 @@ from src.data.format import (  # noqa: E402
     apply_compact_system_to_training_text,
     build_training_labels,
 )
-from src.inference.generate_hf import prepare_hf_kiosk_tokenizer  # noqa: E402
+from src.inference.generate_hf import HFTokenizerAdapter, prepare_hf_kiosk_tokenizer  # noqa: E402
 from src.data.kiosk_schemas import SCHEMAS_PATH  # noqa: E402
 from src.paths import ROOT  # noqa: E402
-
-
-class _HFTokenizerAdapter:
-    """Minimal adapter so build_training_labels can use HF tokenizers."""
-
-    def __init__(self, tokenizer) -> None:
-        self._tok = tokenizer
-        self._special: Dict[str, int] = {}
-
-    def encode(self, text: str):
-        ids = self._tok.encode(text, add_special_tokens=False)
-
-        class _Enc:
-            pass
-
-        enc = _Enc()
-        enc.ids = ids
-        return enc
-
-    def token_to_id(self, token: str):
-        if token not in self._special:
-            tid = self._tok.convert_tokens_to_ids(token)
-            self._special[token] = tid if tid is not None else self._tok.unk_token_id
-        return self._special[token]
 
 
 class KioskTextDataset(Dataset):
@@ -60,7 +36,7 @@ class KioskTextDataset(Dataset):
         tool_schemas: List[dict],
         use_compact_system: bool = True,
     ) -> None:
-        self.adapter = _HFTokenizerAdapter(tokenizer)
+        self.adapter = HFTokenizerAdapter(tokenizer)
         self.max_seq_len = max_seq_len
         self.tool_schemas = tool_schemas
         self.use_compact_system = use_compact_system
