@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 import math
 import sys
 from functools import partial
@@ -21,6 +22,7 @@ from src.paths import PROCESSED, ROOT, load_config, shard_paths  # noqa: E402
 
 from src.model import DecoderOnlyTransformer, ModelConfig  # noqa: E402
 from src.data.kiosk_actions import num_action_classes  # noqa: E402
+from src.data.kiosk_schemas import SCHEMAS_PATH  # noqa: E402
 from src.training.dataset import (  # noqa: E402
     MixedDataset,
     auto_samples_per_epoch,
@@ -66,7 +68,22 @@ def main() -> None:
     if samples_per_epoch <= 0:
         samples_per_epoch = auto_samples_per_epoch(train_shards)
 
-    train_ds = MixedDataset(train_shards, weights, tokenizer, max_seq_len=max_seq, seed=seed, samples_per_epoch=samples_per_epoch)
+    use_compact = bool(tcfg.get("use_compact_system_in_training", False))
+    tool_schemas = json.loads(SCHEMAS_PATH.read_text(encoding="utf-8")) if use_compact else None
+    ds_kw = dict(
+        use_compact_system_kiosk=use_compact,
+        tool_schemas=tool_schemas,
+    )
+
+    train_ds = MixedDataset(
+        train_shards,
+        weights,
+        tokenizer,
+        max_seq_len=max_seq,
+        seed=seed,
+        samples_per_epoch=samples_per_epoch,
+        **ds_kw,
+    )
     val_paths = {k: v for k, v in shard_paths("val").items() if v.exists()}
     val_loader = None
     if val_paths:
@@ -77,6 +94,7 @@ def main() -> None:
             max_seq_len=max_seq,
             seed=seed + 999,
             fixed_indices=build_fixed_val_indices(val_paths, weights, val_samples, seed + 999),
+            **ds_kw,
         )
         val_loader = DataLoader(val_ds, batch_size=batch_size, shuffle=False, num_workers=num_workers, collate_fn=collate_fn)
 
@@ -91,6 +109,7 @@ def main() -> None:
             max_seq_len=max_seq,
             seed=seed + 1999,
             fixed_indices=build_fixed_val_indices(kiosk_val_paths, {"kiosk": 1.0}, min(val_samples, 2000), seed + 1999),
+            **ds_kw,
         )
         kiosk_val_loader = DataLoader(
             kiosk_val_ds,
@@ -141,7 +160,8 @@ def main() -> None:
         f"effective_batch={batch_size * grad_accum} "
         f"opt_steps/epoch={math.ceil(samples_per_epoch / (batch_size * grad_accum))} "
         f"vocab={mcfg.vocab_size} action_classes={mcfg.num_action_classes} "
-        f"action_loss_weight={mcfg.action_loss_weight}"
+        f"action_loss_weight={mcfg.action_loss_weight} "
+        f"compact_system_kiosk={use_compact}"
     )
     train(
         model,

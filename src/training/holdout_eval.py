@@ -10,7 +10,12 @@ import torch
 from tokenizers import Tokenizer
 from tqdm import tqdm
 
-from src.data.format import arguments_match, compact_system_for_inference, parsed_action_name
+from src.data.format import (
+    actions_match,
+    arguments_match,
+    compact_system_for_inference,
+    parsed_action_name,
+)
 from src.inference.generate import generate_tool_call
 from src.model import DecoderOnlyTransformer
 from src.paths import PROCESSED, ROOT
@@ -43,6 +48,7 @@ def evaluate_holdout(
     temperature: float = 0.0,
     action_head_confidence: float = 1.0,
     use_hybrid: bool = False,
+    use_slot_filler: bool = False,
     log_failures: Optional[Path] = None,
     max_log_samples: int = 5,
     max_samples: Optional[int] = None,
@@ -87,7 +93,7 @@ def evaluate_holdout(
             temperature=temperature,
             action_head_confidence=action_head_confidence,
             use_hybrid=use_hybrid,
-            use_slot_filler=False,
+            use_slot_filler=use_slot_filler if use_hybrid else False,
             expected_action=expected,
         )
         total += 1
@@ -95,7 +101,7 @@ def evaluate_holdout(
         if result.lm_parsed is not None:
             lm_json_valid += 1
             lm_got = parsed_action_name(result.lm_parsed)
-            if lm_got and expected and lm_got.lower() == expected.lower():
+            if actions_match(lm_got, expected):
                 lm_action_match += 1
             lm_args = result.lm_parsed.get("arguments")
             if arguments_match(lm_args if isinstance(lm_args, dict) else {}, expected_args):
@@ -107,12 +113,12 @@ def evaluate_holdout(
         if result.parsed is not None:
             final_json_valid += 1
             got = parsed_action_name(result.parsed)
-            if got and expected and got.lower() == expected.lower():
+            if actions_match(got, expected):
                 final_action_match += 1
 
         if log_failures is not None and len(failures) < max_log_samples:
             got = parsed_action_name(result.parsed)
-            ok_action = got and expected and got.lower() == expected.lower()
+            ok_action = actions_match(got, expected)
             if result.lm_parsed is None or not ok_action:
                 failures.append(
                     {

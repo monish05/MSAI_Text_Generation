@@ -75,6 +75,11 @@ def main() -> None:
     parser.add_argument("--hybrid", action="store_true", default=True)
     parser.add_argument("--no-hybrid", action="store_false", dest="hybrid")
     parser.add_argument("--action-head-confidence", type=float, default=0.5)
+    parser.add_argument(
+        "--backend",
+        choices=("scratch", "lora"),
+        default="scratch",
+    )
     args = parser.parse_args()
 
     kiosk_root = args.kiosk_root or Path(os.environ.get("KIOSK_ROOT", ROOT.parent / "kiosk"))
@@ -92,7 +97,20 @@ def main() -> None:
         sys.exit(1)
 
     schemas = json.loads(SCHEMAS_PATH.read_text(encoding="utf-8"))
-    model, tokenizer, device = load_model_and_tokenizer(ckpt, ROOT / "tokenizer", args.device)
+    if args.backend == "lora":
+        from src.inference.generate_hf import (  # noqa: E402
+            generate_answer_hf,
+            generate_tool_call_hf,
+            load_lora_model_and_tokenizer,
+        )
+
+        model, tokenizer, device = load_lora_model_and_tokenizer(ckpt, args.device)
+        gen_tool = generate_tool_call_hf
+        gen_ans = generate_answer_hf
+    else:
+        model, tokenizer, device = load_model_and_tokenizer(ckpt, ROOT / "tokenizer", args.device)
+        gen_tool = generate_tool_call
+        gen_ans = generate_answer
     system_prompt = compact_system_for_inference(None, tool_schemas=schemas)
 
     executor, Action, PlannerContext = _setup_kiosk(kiosk_root, archive)
@@ -109,17 +127,29 @@ def main() -> None:
         if not question:
             break
 
-        tool_call = generate_tool_call(
-            model,
-            tokenizer,
-            tool_schemas=schemas,
-            question=question,
-            system_prompt=system_prompt,
-            device=device,
-            use_hybrid=args.hybrid,
-            use_slot_filler=True,
-            action_head_confidence=args.action_head_confidence,
-        )
+        if args.backend == "lora":
+            tool_call = gen_tool(
+                model,
+                tokenizer,
+                tool_schemas=schemas,
+                question=question,
+                device=device,
+                system_prompt=system_prompt,
+                use_hybrid=args.hybrid,
+                use_slot_filler=True,
+            )
+        else:
+            tool_call = gen_tool(
+                model,
+                tokenizer,
+                tool_schemas=schemas,
+                question=question,
+                system_prompt=system_prompt,
+                device=device,
+                use_hybrid=args.hybrid,
+                use_slot_filler=True,
+                action_head_confidence=args.action_head_confidence,
+            )
         parsed = tool_call.parsed or {}
         action_name = parsed.get("action") or tool_call.head_action or "noop"
         arguments = parsed.get("arguments") if isinstance(parsed.get("arguments"), dict) else {}
@@ -136,15 +166,26 @@ def main() -> None:
                 context.last_subject = str(name)
 
         tool_result = _blueprint_to_tool_json(result)
-        answer = generate_answer(
-            model,
-            tokenizer,
-            tool_schemas=schemas,
-            question=question,
-            action_json=tool_call.raw_json,
-            tool_result=tool_result,
-            device=device,
-        )
+        if args.backend == "lora":
+            answer = gen_ans(
+                model,
+                tokenizer,
+                tool_schemas=schemas,
+                question=question,
+                action_json=tool_call.raw_json,
+                tool_result=tool_result,
+                device=device,
+            )
+        else:
+            answer = gen_ans(
+                model,
+                tokenizer,
+                tool_schemas=schemas,
+                question=question,
+                action_json=tool_call.raw_json,
+                tool_result=tool_result,
+                device=device,
+            )
         context.short_history.append({"question": question, "answer": answer})
         print(f"facts: {len(result.facts)}  notes: {result.notes[:1]}")
         print(f"answer: {answer}")

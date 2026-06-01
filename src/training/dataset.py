@@ -10,7 +10,7 @@ from typing import Dict, List, Optional, Tuple
 import torch
 from torch.utils.data import Dataset
 
-from src.data.format import SPECIAL_TOKENS, build_training_labels
+from src.data.format import SPECIAL_TOKENS, apply_compact_system_to_training_text, build_training_labels
 from src.data.kiosk_actions import IGNORE_ACTION_LABEL, action_meta_to_label
 
 IndexEntry = Tuple[str, int]
@@ -70,10 +70,14 @@ class MixedDataset(Dataset):
         seed: int = 42,
         samples_per_epoch: int = 0,
         fixed_indices: Optional[List[IndexEntry]] = None,
+        use_compact_system_kiosk: bool = False,
+        tool_schemas: Optional[List[dict]] = None,
     ) -> None:
         self.tokenizer = tokenizer
         self.max_seq_len = max_seq_len
         self.base_seed = seed
+        self.use_compact_system_kiosk = use_compact_system_kiosk
+        self.tool_schemas = tool_schemas
         self.sources, self.rows, self.weight_list = _load_shards(shard_paths, weights)
         self.pad_id = tokenizer.token_to_id(SPECIAL_TOKENS["pad"]) or 0
 
@@ -96,6 +100,8 @@ class MixedDataset(Dataset):
         source, row_idx = self._epoch_indices[index]
         row = self.rows[source][row_idx]
         text = row["text"]
+        if source == "kiosk" and self.use_compact_system_kiosk and self.tool_schemas:
+            text = apply_compact_system_to_training_text(text, tool_schemas=self.tool_schemas)
         ids, label_ids, action_anchor = build_training_labels(text, self.tokenizer, max_seq_len=self.max_seq_len)
 
         action_label = IGNORE_ACTION_LABEL

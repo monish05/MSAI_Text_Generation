@@ -12,11 +12,12 @@ from tokenizers import Tokenizer
 from src.data.format import (
     SPECIAL_TOKENS,
     action_to_json,
-    arguments_match,
     build_system_prompt,
+    canonicalize_action_name,
     encode_formatted_text,
     encode_generation_prompt,
     extract_json_from_text,
+    normalize_parsed_tool_call,
     parse_action_json,
     parsed_action_name,
 )
@@ -258,6 +259,7 @@ def generate_tool_call(
         tokenizer, system=system, user=user, max_seq_len=max_seq
     ).to(device)
     head_action, head_conf = _predict_kiosk_action(model, input_ids, device)
+    head_action = canonicalize_action_name(head_action) or head_action
 
     lm_text = _generate_text(
         model,
@@ -296,7 +298,9 @@ def generate_tool_call(
     raw_json = extract_json_from_text(lm_text) or lm_text.strip()
 
     if use_hybrid:
-        action = action or head_action
+        lm_canon = canonicalize_action_name(lm_action) if lm_action else None
+        head_canon = canonicalize_action_name(head_action) if head_action else None
+        action = lm_canon or head_canon or action or head_action
         if action:
             used_hybrid_flag = True
             args_raw, args_parsed = _generate_arguments(
@@ -341,9 +345,11 @@ def generate_tool_call(
 
     parsed = parse_action_json(raw_json)
     if parsed is None and action and (fallback_enabled or use_hybrid):
-        parsed = {"action": action, "arguments": args}
+        parsed = normalize_parsed_tool_call({"action": action, "arguments": args})
     elif parsed is None and lm_parsed is not None:
         parsed = lm_parsed
+    elif parsed is not None:
+        parsed = normalize_parsed_tool_call(parsed)
 
     return ToolCallResult(
         raw_json=raw_json,

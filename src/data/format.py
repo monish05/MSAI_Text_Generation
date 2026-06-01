@@ -6,6 +6,8 @@ import json
 import re
 from typing import Any, Dict, List, Optional
 
+from src.data.kiosk_actions import kiosk_action_names
+
 IGNORE_LABEL = -100
 
 SPECIAL_TOKENS = {
@@ -54,6 +56,26 @@ def compact_system_for_inference(
     if tool_schemas is not None:
         return build_system_prompt(tool_schemas)
     return system_blob or ""
+
+
+def apply_compact_system_to_training_text(
+    text: str,
+    *,
+    tool_schemas: Optional[List[Dict[str, Any]]] = None,
+) -> str:
+    """Replace system blob with compact inference-style system (train/serve alignment)."""
+    if SPECIAL_TOKENS["system"] not in text or SPECIAL_TOKENS["user"] not in text:
+        return text
+    parts = text.split(SPECIAL_TOKENS["system"], 1)
+    if len(parts) < 2:
+        return text
+    rest = parts[1]
+    system_blob, suffix = rest.split(SPECIAL_TOKENS["user"], 1)
+    compact = compact_system_for_inference(
+        system_blob.strip() or None,
+        tool_schemas=tool_schemas,
+    )
+    return "".join([SPECIAL_TOKENS["system"], compact, SPECIAL_TOKENS["user"], suffix])
 
 
 def format_training_text(
@@ -248,11 +270,71 @@ def build_training_labels(
 
 
 def action_to_json(action: str, arguments: Dict[str, Any]) -> str:
-    return json.dumps({"action": action, "arguments": arguments}, ensure_ascii=False)
+    return json.dumps(
+        {"action": action, "arguments": arguments},
+        ensure_ascii=False,
+        separators=(",", ":"),
+    )
 
 
 def actions_to_json(actions: List[Dict[str, Any]]) -> str:
-    return json.dumps({"actions": actions}, ensure_ascii=False)
+    return json.dumps({"actions": actions}, ensure_ascii=False, separators=(",", ":"))
+
+
+def canonicalize_action_name(name: Optional[str]) -> Optional[str]:
+    """Map LM output like ' lookup _ person ' to registry name lookup_person."""
+    if not name or not isinstance(name, str):
+        return None
+    raw = name.strip().lower()
+    if not raw:
+        return None
+    known = {n.lower(): n for n in kiosk_action_names()}
+    if raw in known:
+        return known[raw]
+    normalized = re.sub(r"[\s_]+", "_", raw)
+    normalized = re.sub(r"_+", "_", normalized).strip("_")
+    if normalized in known:
+        return known[normalized]
+    compact = normalized.replace("_", "")
+    for key, canonical in known.items():
+        if key.replace("_", "") == compact:
+            return canonical
+    return None
+
+
+def normalize_string_arg(value: Any) -> Any:
+    if isinstance(value, str):
+        return re.sub(r"\s+", " ", value.replace("\u0120", " ").replace("Ġ", " ")).strip()
+    return value
+
+
+def normalize_parsed_tool_call(parsed: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+    """Canonicalize action name and collapse spacing in string arguments."""
+    if not parsed or not isinstance(parsed, dict):
+        return parsed
+    out = dict(parsed)
+    if "action" in out:
+        canon = canonicalize_action_name(str(out.get("action", "")))
+        if canon:
+            out["action"] = canon
+    if "actions" in out and isinstance(out["actions"], list):
+        actions = []
+        for item in out["actions"]:
+            if not isinstance(item, dict):
+                continue
+            item = dict(item)
+            canon = canonicalize_action_name(str(item.get("action", "")))
+            if canon:
+                item["action"] = canon
+            args = item.get("arguments")
+            if isinstance(args, dict):
+                item["arguments"] = {k: normalize_string_arg(v) for k, v in args.items()}
+            actions.append(item)
+        out["actions"] = actions
+    args = out.get("arguments")
+    if isinstance(args, dict):
+        out["arguments"] = {k: normalize_string_arg(v) for k, v in args.items()}
+    return out
 
 
 def normalize_lm_json(text: str) -> str:
@@ -262,6 +344,7 @@ def normalize_lm_json(text: str) -> str:
     text = text.replace("\u0120", " ").replace("Ġ", " ")
     text = re.sub(r'"\s+([^"]+?)\s+"\s*:', r'"\1":', text)
     text = re.sub(r":\s+\"", r': "', text)
+    text = re.sub(r":\s*\"([^\"]*?)\"\s*([,}])", lambda m: ': "' + re.sub(r"\s+", " ", m.group(1)).strip() + '"' + m.group(2), text)
     return text.strip()
 
 
@@ -281,9 +364,10 @@ def parse_action_json(text: str) -> Optional[Dict[str, Any]]:
     if not candidate:
         return None
     try:
-        return json.loads(candidate)
+        parsed = json.loads(candidate)
     except json.JSONDecodeError:
         return None
+    return normalize_parsed_tool_call(parsed)
 
 
 def arguments_match(got: Optional[Dict[str, Any]], expected: Optional[Dict[str, Any]]) -> bool:
@@ -301,7 +385,9 @@ def arguments_match(got: Optional[Dict[str, Any]], expected: Optional[Dict[str, 
         if got_val is None:
             return False
         if isinstance(exp_val, str) and isinstance(got_val, str):
-            if exp_val.strip().lower() != got_val.strip().lower():
+            exp_s = normalize_string_arg(exp_val).lower()
+            got_s = normalize_string_arg(got_val).lower()
+            if exp_s != got_s:
                 return False
         elif got_val != exp_val:
             return False
@@ -312,11 +398,20 @@ def parsed_action_name(parsed: Optional[Dict[str, Any]]) -> Optional[str]:
     if not parsed:
         return None
     if parsed.get("action"):
-        return str(parsed["action"])
+        return canonicalize_action_name(str(parsed["action"])) or str(parsed["action"]).strip()
     actions = parsed.get("actions")
     if isinstance(actions, list) and actions and isinstance(actions[0], dict):
-        return actions[0].get("action")
+        act = actions[0].get("action")
+        return canonicalize_action_name(str(act)) if act else None
     return None
+
+
+def actions_match(got: Optional[str], expected: Optional[str]) -> bool:
+    if not got or not expected:
+        return False
+    g = canonicalize_action_name(got) or got.strip().lower()
+    e = canonicalize_action_name(expected) or expected.strip().lower()
+    return g == e
 
 
 def xlam_answers_to_action_json(answers_raw: str) -> Optional[str]:

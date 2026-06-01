@@ -63,6 +63,10 @@ Config knobs in `configs/train.yaml` under `synthetic:`.
 
 Training uses **next-token prediction** with loss only on `<|assistant|>` spans. Holdout eval uses **greedy** decoding (`temperature=0`).
 
+### Recovery after collapse (Path A / B)
+
+See [docs/QUEST_KIOSK_RECOVERY.md](docs/QUEST_KIOSK_RECOVERY.md) for kiosk-only fine-tune, eval gates, and LoRA escalation.
+
 ### Quest interactive training
 
 ```bash

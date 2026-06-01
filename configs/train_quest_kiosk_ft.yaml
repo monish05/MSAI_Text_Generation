@@ -1,4 +1,4 @@
-# Optional kiosk-only fine-tune after train_quest.yaml (5 epochs from last.pt)
+# Kiosk-only fine-tune after train_quest.yaml (from checkpoints/last.pt)
 paths:
   data_raw: data
   kiosk_synthetic: data/kiosk_synthetic
@@ -26,20 +26,21 @@ tokenizer:
   min_frequency: 2
 
 training:
-  num_epochs: 5
-  samples_per_epoch: 0
+  num_epochs: 10
+  samples_per_epoch: 25000
   val_samples: 2000
   batch_size: 64
   grad_accumulation_steps: 4
   num_workers: 4
-  lr: 1.0e-4
+  lr: 5.0e-5
   weight_decay: 0.01
-  warmup_steps: 200
+  warmup_steps: 300
   grad_clip: 1.0
   eval_every_epochs: 1
   holdout_eval_every_epochs: 1
-  action_loss_weight: 0.08
+  action_loss_weight: 0.25
   best_checkpoint_metric: holdout_composite
+  use_compact_system_in_training: true
   plot_every_epochs: 1
   log_every: 50
   device: cuda
