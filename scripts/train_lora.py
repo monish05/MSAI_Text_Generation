@@ -116,6 +116,11 @@ def main() -> None:
         )
 
     adapter_dir.mkdir(parents=True, exist_ok=True)
+    save_strategy = tcfg.get("save_strategy", "no")
+    if save_strategy is False:
+        save_strategy = "no"
+    elif save_strategy is True:
+        save_strategy = "epoch"
     training_args = TrainingArguments(
         output_dir=str(adapter_dir),
         num_train_epochs=int(tcfg.get("num_epochs", 5)),
@@ -125,7 +130,7 @@ def main() -> None:
         warmup_ratio=float(tcfg.get("warmup_ratio", 0.05)),
         weight_decay=float(tcfg.get("weight_decay", 0.01)),
         logging_steps=20,
-        save_strategy=str(tcfg.get("save_strategy", "no")),
+        save_strategy=str(save_strategy),
         save_total_limit=int(tcfg.get("save_total_limit", 1)),
         eval_strategy="epoch" if eval_ds else "no",
         bf16=torch.cuda.is_available(),

@@ -23,7 +23,7 @@ training:
   device: cuda
   seed: 44
   # Quest home quota: avoid per-epoch HF checkpoints (embed+LoRA ~GB each).
-  save_strategy: no
+  save_strategy: "no"
 
 paths:
   train_jsonl: data/processed/kiosk_train.jsonl
