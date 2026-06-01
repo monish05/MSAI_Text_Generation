@@ -18,7 +18,12 @@ from src.training.holdout_eval import evaluate_holdout  # noqa: E402
 
 def main() -> None:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--checkpoint", type=Path, default=ROOT / "checkpoints" / "best.pt")
+    parser.add_argument(
+        "--checkpoint",
+        type=Path,
+        default=None,
+        help="scratch: .pt file; lora: adapter dir under checkpoints/ (default checkpoints/lora_kiosk)",
+    )
     parser.add_argument("--device", default=None)
     parser.add_argument("--hybrid", action="store_true", help="Hybrid pass-1 (head + args/slot filler)")
     parser.add_argument(
@@ -30,15 +35,19 @@ def main() -> None:
     args = parser.parse_args()
 
     if args.backend == "lora":
-        from src.inference.generate_hf import load_lora_model_and_tokenizer  # noqa: E402
+        from src.inference.generate_hf import load_lora_model_and_tokenizer, resolve_lora_adapter_dir  # noqa: E402
         from src.training.holdout_eval_hf import evaluate_holdout_hf  # noqa: E402
 
-        model, tokenizer, device = load_lora_model_and_tokenizer(args.checkpoint, args.device)
+        ckpt = resolve_lora_adapter_dir(args.checkpoint)
+        print(f"LoRA adapter: {ckpt}")
+        model, tokenizer, device = load_lora_model_and_tokenizer(ckpt, args.device)
         report = evaluate_holdout_hf(
             model, tokenizer, device, use_hybrid=args.hybrid
         )
+        report["checkpoint"] = str(ckpt)
     else:
-        model, tokenizer, device = load_model_and_tokenizer(args.checkpoint, ROOT / "tokenizer", args.device)
+        ckpt = args.checkpoint or (ROOT / "checkpoints" / "best.pt")
+        model, tokenizer, device = load_model_and_tokenizer(ckpt, ROOT / "tokenizer", args.device)
         report = evaluate_holdout(
             model,
             tokenizer,
@@ -47,12 +56,13 @@ def main() -> None:
             use_hybrid=args.hybrid,
             use_slot_filler=args.hybrid,
         )
-    report["checkpoint"] = str(args.checkpoint)
+        report["checkpoint"] = str(ckpt)
     report["backend"] = args.backend
     report["hybrid"] = args.hybrid
 
     suffix = "_hybrid" if args.hybrid else ""
-    out = ROOT / "checkpoints" / f"eval_report{suffix}.json"
+    backend_tag = "_lora" if args.backend == "lora" else ""
+    out = ROOT / "checkpoints" / f"eval_report{backend_tag}{suffix}.json"
     out.write_text(json.dumps(report, indent=2), encoding="utf-8")
     print(json.dumps(report, indent=2))
     print(

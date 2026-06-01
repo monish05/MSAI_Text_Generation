@@ -24,6 +24,28 @@ from src.inference.types import ToolCallResult
 from src.paths import ROOT
 
 
+def resolve_lora_adapter_dir(checkpoint: Optional[Path] = None) -> Path:
+    """Resolve LoRA adapter directory (default: checkpoints/lora_kiosk)."""
+    candidates: list[Path] = []
+    if checkpoint is not None:
+        p = Path(checkpoint)
+        candidates.append(p if p.is_absolute() else ROOT / p)
+    candidates.extend(
+        [
+            ROOT / "checkpoints" / "lora_kiosk",
+            ROOT / "checkpoints",
+            ROOT / "checkpoint_lora_kiosk",  # legacy local path
+        ]
+    )
+    for path in candidates:
+        if (path / "adapter_config.json").exists() or (path / "lora_config.json").exists():
+            return path.resolve()
+    if checkpoint is not None:
+        p = Path(checkpoint)
+        return (p if p.is_absolute() else ROOT / p).resolve()
+    return (ROOT / "checkpoints" / "lora_kiosk").resolve()
+
+
 def _resolve_device(name: Optional[str] = None) -> torch.device:
     if name:
         return torch.device(name)
@@ -40,13 +62,29 @@ def load_lora_model_and_tokenizer(
 ) -> Tuple[Any, Any, torch.device]:
     from peft import PeftModel
 
-    adapter_dir = Path(adapter_dir)
+    adapter_dir = resolve_lora_adapter_dir(adapter_dir)
+    if not adapter_dir.exists():
+        raise FileNotFoundError(
+            f"LoRA adapter dir not found: {adapter_dir}. "
+            "Train with: python scripts/train_lora.py --config configs/train_lora_kiosk.yaml "
+            "(saves to checkpoints/lora_kiosk/)"
+        )
+
     cfg_path = adapter_dir / "lora_config.json"
     if cfg_path.exists():
         meta = json.loads(cfg_path.read_text(encoding="utf-8"))
         base_model = base_model or meta.get("base_model")
+
     if not base_model:
-        raise ValueError("base_model required (set in lora_config.json or pass explicitly)")
+        peft_cfg = adapter_dir / "adapter_config.json"
+        if peft_cfg.exists():
+            base_model = json.loads(peft_cfg.read_text(encoding="utf-8")).get("base_model_name_or_path")
+
+    if not base_model:
+        raise ValueError(
+            f"base_model not found for {adapter_dir}. "
+            "Expected checkpoints/lora_kiosk/ with lora_config.json or adapter_config.json."
+        )
 
     dev = _resolve_device(device)
     tokenizer = AutoTokenizer.from_pretrained(adapter_dir, trust_remote_code=True)

@@ -91,23 +91,26 @@ def main() -> None:
         print(f"Archive not found: {archive}")
         sys.exit(1)
 
-    ckpt = ROOT / args.checkpoint
-    if not ckpt.exists():
-        print(f"Missing checkpoint {ckpt}")
-        sys.exit(1)
-
     schemas = json.loads(SCHEMAS_PATH.read_text(encoding="utf-8"))
+
     if args.backend == "lora":
-        from src.inference.generate_hf import (  # noqa: E402
+        from src.inference.generate_hf import (
             generate_answer_hf,
             generate_tool_call_hf,
             load_lora_model_and_tokenizer,
+            resolve_lora_adapter_dir,
         )
 
+        ckpt = resolve_lora_adapter_dir(Path(args.checkpoint) if args.checkpoint else None)
+        print(f"LoRA adapter: {ckpt}")
         model, tokenizer, device = load_lora_model_and_tokenizer(ckpt, args.device)
         gen_tool = generate_tool_call_hf
         gen_ans = generate_answer_hf
     else:
+        ckpt = Path(args.checkpoint) if args.checkpoint else ROOT / "checkpoints" / "best.pt"
+        if not ckpt.exists():
+            print(f"Missing checkpoint {ckpt}")
+            sys.exit(1)
         model, tokenizer, device = load_model_and_tokenizer(ckpt, ROOT / "tokenizer", args.device)
         gen_tool = generate_tool_call
         gen_ans = generate_answer

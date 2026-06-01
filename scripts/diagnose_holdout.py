@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import json
 from collections import Counter, defaultdict
+from pathlib import Path
 
 from _bootstrap import init
 
@@ -20,9 +21,14 @@ from src.training.holdout_eval import _extract_question, _extract_system  # noqa
 
 def main() -> None:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--checkpoint", type=str, default=str(ROOT / "checkpoints" / "best.pt"))
+    parser.add_argument("--checkpoint", type=str, default=None)
     parser.add_argument("--device", default=None)
     parser.add_argument("--hybrid", action="store_true", help="Use hybrid pass-1 (demo-style)")
+    parser.add_argument(
+        "--backend",
+        choices=("scratch", "lora"),
+        default="scratch",
+    )
     parser.add_argument("--max-samples", type=int, default=None)
     args = parser.parse_args()
 
@@ -31,9 +37,18 @@ def main() -> None:
         raise SystemExit(f"Missing {holdout_path}")
 
     schemas = json.loads(SCHEMAS_PATH.read_text(encoding="utf-8"))
-    model, tokenizer, device = load_model_and_tokenizer(
-        ROOT / args.checkpoint, ROOT / "tokenizer", args.device
-    )
+
+    if args.backend == "lora":
+        from src.inference.generate_hf import generate_tool_call_hf, load_lora_model_and_tokenizer, resolve_lora_adapter_dir
+
+        adapter = resolve_lora_adapter_dir(Path(args.checkpoint) if args.checkpoint else None)
+        print(f"LoRA adapter: {adapter}")
+        model, tokenizer, device = load_lora_model_and_tokenizer(adapter, args.device)
+        gen_fn = generate_tool_call_hf
+    else:
+        ckpt = Path(args.checkpoint) if args.checkpoint else ROOT / "checkpoints" / "best.pt"
+        model, tokenizer, device = load_model_and_tokenizer(ckpt, ROOT / "tokenizer", args.device)
+        gen_fn = generate_tool_call
 
     gold_counts: Counter[str] = Counter()
     lm_counts: Counter[str] = Counter()
@@ -57,7 +72,7 @@ def main() -> None:
             continue
         expected = (row.get("meta") or {}).get("action")
         system_prompt = compact_system_for_inference(_extract_system(text), tool_schemas=schemas)
-        result = generate_tool_call(
+        result = gen_fn(
             model,
             tokenizer,
             tool_schemas=schemas,
@@ -66,7 +81,7 @@ def main() -> None:
             device=device,
             use_hybrid=args.hybrid,
             use_slot_filler=args.hybrid,
-            action_head_confidence=1.0,
+            **({} if args.backend == "lora" else {"action_head_confidence": 1.0}),
         )
         total += 1
         gold = expected or "?"
@@ -88,7 +103,7 @@ def main() -> None:
         if actions_match(final_act, expected):
             final_match += 1
 
-    print(f"holdout rows: {total}  hybrid={args.hybrid}")
+    print(f"holdout rows: {total}  backend={args.backend}  hybrid={args.hybrid}")
     print(f"lm_action_match: {lm_match / max(total, 1):.3f}")
     print(f"head_action_match: {head_match / max(total, 1):.3f}")
     print(f"final_action_match: {final_match / max(total, 1):.3f}")
