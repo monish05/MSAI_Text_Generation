@@ -21,6 +21,7 @@ from src.data.format import (  # noqa: E402
     apply_compact_system_to_training_text,
     build_training_labels,
 )
+from src.inference.generate_hf import prepare_hf_kiosk_tokenizer  # noqa: E402
 from src.data.kiosk_schemas import SCHEMAS_PATH  # noqa: E402
 from src.paths import ROOT  # noqa: E402
 
@@ -109,12 +110,7 @@ def main() -> None:
     train_path = ROOT / cfg["paths"]["train_jsonl"]
     val_path = ROOT / cfg["paths"].get("val_jsonl", "")
 
-    tokenizer = AutoTokenizer.from_pretrained(base_model, trust_remote_code=True)
-    if tokenizer.pad_token is None:
-        tokenizer.pad_token = tokenizer.eos_token
-
-    special = list(SPECIAL_TOKENS.values())
-    tokenizer.add_special_tokens({"additional_special_tokens": special})
+    tokenizer = prepare_hf_kiosk_tokenizer(base_model)
 
     model = AutoModelForCausalLM.from_pretrained(
         base_model,
@@ -129,6 +125,7 @@ def main() -> None:
         lora_dropout=float(lora_cfg.get("lora_dropout", 0.05)),
         target_modules=lora_cfg.get("target_modules", ["q_proj", "v_proj"]),
         task_type="CAUSAL_LM",
+        modules_to_save=["embed_tokens", "lm_head"],
     )
     model = get_peft_model(model, peft_config)
 

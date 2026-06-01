@@ -24,6 +24,16 @@ from src.inference.types import ToolCallResult
 from src.paths import ROOT
 
 
+def prepare_hf_kiosk_tokenizer(base_model: str):
+    """Match train_lora.py tokenizer setup (special tokens + pad)."""
+    tokenizer = AutoTokenizer.from_pretrained(base_model, trust_remote_code=True)
+    if tokenizer.pad_token is None:
+        tokenizer.pad_token = tokenizer.eos_token
+    special = list(SPECIAL_TOKENS.values())
+    tokenizer.add_special_tokens({"additional_special_tokens": special})
+    return tokenizer
+
+
 def resolve_lora_adapter_dir(checkpoint: Optional[Path] = None) -> Path:
     """Resolve LoRA adapter directory (default: checkpoints/lora_kiosk)."""
     candidates: list[Path] = []
@@ -87,16 +97,28 @@ def load_lora_model_and_tokenizer(
         )
 
     dev = _resolve_device(device)
-    tokenizer = AutoTokenizer.from_pretrained(adapter_dir, trust_remote_code=True)
-    if tokenizer.pad_token is None:
-        tokenizer.pad_token = tokenizer.eos_token
 
+    # Must match train_lora.py token setup before loading adapter weights.
+    tokenizer = prepare_hf_kiosk_tokenizer(base_model)
+
+    dtype = torch.bfloat16 if dev.type == "cuda" else torch.float32
     base = AutoModelForCausalLM.from_pretrained(
         base_model,
-        torch_dtype=torch.bfloat16 if dev.type == "cuda" else torch.float32,
+        torch_dtype=dtype,
         trust_remote_code=True,
     )
-    model = PeftModel.from_pretrained(base, adapter_dir)
+    base.resize_token_embeddings(len(tokenizer))
+
+    try:
+        model = PeftModel.from_pretrained(base, adapter_dir)
+    except RuntimeError as exc:
+        if "size mismatch" not in str(exc):
+            raise
+        model = PeftModel.from_pretrained(
+            base,
+            adapter_dir,
+            ignore_mismatched_sizes=True,
+        )
     model.to(dev)
     model.eval()
     return model, tokenizer, dev
