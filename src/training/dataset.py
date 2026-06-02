@@ -10,8 +10,7 @@ from typing import Dict, List, Optional, Tuple
 import torch
 from torch.utils.data import Dataset
 
-from src.data.format import SPECIAL_TOKENS, apply_compact_system_to_training_text, build_training_labels
-from src.data.kiosk_actions import IGNORE_ACTION_LABEL, action_meta_to_label
+from src.data.format import SPECIAL_TOKENS, build_training_labels
 
 IndexEntry = Tuple[str, int]
 
@@ -66,18 +65,14 @@ class MixedDataset(Dataset):
         shard_paths: Dict[str, Path],
         weights: Dict[str, float],
         tokenizer,
-        max_seq_len: int = 512,
+        max_seq_len: int = 1024,
         seed: int = 42,
         samples_per_epoch: int = 0,
         fixed_indices: Optional[List[IndexEntry]] = None,
-        use_compact_system_kiosk: bool = False,
-        tool_schemas: Optional[List[dict]] = None,
     ) -> None:
         self.tokenizer = tokenizer
         self.max_seq_len = max_seq_len
         self.base_seed = seed
-        self.use_compact_system_kiosk = use_compact_system_kiosk
-        self.tool_schemas = tool_schemas
         self.sources, self.rows, self.weight_list = _load_shards(shard_paths, weights)
         self.pad_id = tokenizer.token_to_id(SPECIAL_TOKENS["pad"]) or 0
 
@@ -100,26 +95,10 @@ class MixedDataset(Dataset):
         source, row_idx = self._epoch_indices[index]
         row = self.rows[source][row_idx]
         text = row["text"]
-        if source == "kiosk" and self.use_compact_system_kiosk and self.tool_schemas:
-            text = apply_compact_system_to_training_text(text, tool_schemas=self.tool_schemas)
-        ids, label_ids, action_anchor = build_training_labels(text, self.tokenizer, max_seq_len=self.max_seq_len)
-
-        action_label = IGNORE_ACTION_LABEL
-        if source == "kiosk":
-            action_label = action_meta_to_label(row.get("meta") or {})
-            if action_label < 0 or action_anchor is None:
-                action_label = IGNORE_ACTION_LABEL
-                action_anchor = -1
-        else:
-            action_anchor = -1
-
-        input_ids = torch.tensor(ids, dtype=torch.long)
-        labels = torch.tensor(label_ids, dtype=torch.long)
+        ids, label_ids = build_training_labels(text, self.tokenizer, max_seq_len=self.max_seq_len)
         return {
-            "input_ids": input_ids,
-            "labels": labels,
-            "action_label": torch.tensor(action_label, dtype=torch.long),
-            "action_anchor_idx": torch.tensor(action_anchor if action_anchor is not None else -1, dtype=torch.long),
+            "input_ids": torch.tensor(ids, dtype=torch.long),
+            "labels": torch.tensor(label_ids, dtype=torch.long),
         }
 
 
@@ -130,16 +109,12 @@ def build_fixed_val_indices(shard_paths: Dict[str, Path], weights: Dict[str, flo
 
 def collate_batch(batch: List[dict], pad_id: int = 0) -> Dict[str, torch.Tensor]:
     max_len = max(b["input_ids"].size(0) for b in batch)
-    input_ids, labels, action_labels, action_anchors = [], [], [], []
+    input_ids, labels = [], []
     for b in batch:
         pad_len = max_len - b["input_ids"].size(0)
         input_ids.append(torch.cat([b["input_ids"], torch.full((pad_len,), pad_id, dtype=torch.long)]))
         labels.append(torch.cat([b["labels"], torch.full((pad_len,), -100, dtype=torch.long)]))
-        action_labels.append(b["action_label"])
-        action_anchors.append(b["action_anchor_idx"])
     return {
         "input_ids": torch.stack(input_ids),
         "labels": torch.stack(labels),
-        "action_label": torch.stack(action_labels),
-        "action_anchor_idx": torch.stack(action_anchors),
     }

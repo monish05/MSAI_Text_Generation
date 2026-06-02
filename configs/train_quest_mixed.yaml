@@ -1,4 +1,10 @@
-# Vanilla kiosk agent LM — paths relative to repo root
+# Quest H100 — kiosk agent LM + light xLAM/Glaive mix (JSON + fluency)
+# Run after kiosk-only baseline, or when answers/JSON need a boost.
+#
+# Preprocess on Quest (needs raw corpora under data/):
+#   python scripts/preprocess.py --config configs/train_quest_mixed.yaml
+# Train:
+#   python scripts/train.py --config configs/train_quest_mixed.yaml
 paths:
   data_raw: data
   kiosk_synthetic: data/kiosk_synthetic
@@ -6,17 +12,17 @@ paths:
   kiosk_archive: ../kiosk/Archive
 
 mix_weights:
-  kiosk: 1.0
-  xlam: 0.0
-  glaive: 0.0
+  kiosk: 0.9
+  xlam: 0.05
+  glaive: 0.05
   toolbench: 0.0
   alpaca: 0.0
 
 model:
-  d_model: 256
-  n_heads: 4
-  n_layers: 6
-  d_ff: 1024
+  d_model: 512
+  n_heads: 8
+  n_layers: 12
+  d_ff: 2048
   max_seq_len: 1024
   dropout: 0.1
 
@@ -25,23 +31,23 @@ tokenizer:
   min_frequency: 2
 
 training:
-  num_epochs: 20
+  num_epochs: 30
   samples_per_epoch: 0
-  val_samples: 2000
+  val_samples: 5000
   batch_size: 64
+  grad_accumulation_steps: 4
   num_workers: 4
-  lr: 3.0e-4
+  lr: 2.0e-4
   weight_decay: 0.01
-  warmup_steps: 500
+  warmup_steps: 1500
   grad_clip: 1.0
-  grad_accumulation_steps: 1
   eval_every_epochs: 1
   holdout_eval_every_epochs: 1
   best_checkpoint_metric: holdout_composite
   plot_every_epochs: 1
   log_every: 50
-  device: auto
-  seed: 42
+  device: cuda
+  seed: 44
 
 synthetic:
   n_total: 10000
@@ -55,8 +61,9 @@ synthetic:
   name_repeat_window: 40
   prefix_prob: 0.12
 
+# Caps conversion size on Quest (0 = no cap). Rows use same <|system|> format as kiosk.
 converter_limits:
-  xlam: 0
-  glaive: 0
+  xlam: 20000
+  glaive: 20000
   toolbench: 0
   alpaca: 0

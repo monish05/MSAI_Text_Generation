@@ -3,7 +3,9 @@
 
 from __future__ import annotations
 
+import argparse
 import json
+from pathlib import Path
 
 from tokenizers import Tokenizer, models, normalizers, pre_tokenizers, processors, trainers
 
@@ -46,7 +48,10 @@ def train_tokenizer(cfg: dict) -> None:
 
 
 def main() -> None:
-    train_tokenizer(load_config())
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--config", type=Path, default=None)
+    args = parser.parse_args()
+    train_tokenizer(load_config(args.config))
 
 
 if __name__ == "__main__":

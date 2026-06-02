@@ -1,101 +1,133 @@
 # MSAI_Text_Generation
 
-Decoder-only Transformer for Northwestern CS Kiosk tool calling.
+Vanilla decoder-only Transformer for the Northwestern CS Kiosk **agent loop**:
+
+1. User question + tool schemas in context  
+2. Model generates tool JSON (`{"action":...,"arguments":...}`) via next-token prediction  
+3. Python `ToolExecutor` runs the tool and returns JSON facts  
+4. Same model generates a short grounded answer after `<|tool|>` results  
+
+No action classifier head — tool choice is ordinary language modeling.
 
 ## Workflow
 
 | Step | Where | Command |
 |------|-------|---------|
-| 1. Synthetic raw | Laptop (kiosk repo) | `python scripts/generate_synthetic.py` |
-| 2. Sync | Laptop | `rsync -av data/kiosk_synthetic/ quest:~/MSAI_Text_Generation/data/kiosk_synthetic/` |
-| 3. Preprocess | Quest login | `python scripts/preprocess.py` |
+| 1. Synthetic data | **Laptop only** (needs `kiosk/` + `Archive/`) | `python scripts/generate_synthetic.py --n 10000` |
+| 2. Preprocess + tokenizer | Laptop **or** Quest | `python scripts/preprocess.py` |
+| 3. Upload to Quest | Laptop → Quest | `rsync` processed shards + tokenizer (see below) |
 | 4. Train | Quest GPU | `python scripts/train.py --config configs/train_quest.yaml` |
+| 5. Demo | Laptop (optional) | `python scripts/kiosk_demo.py` + copy `checkpoints/best.pt` back |
+
+You do **not** need the `kiosk/` repo on Quest. `generate_synthetic.py` runs `ToolExecutor` locally and bakes tool results + answers into each JSONL row; Quest only trains on that text.
+
+### Laptop → Quest upload
+
+After step 2 on your laptop (or run split on Quest if you only upload `raw.jsonl`):
+
+```bash
+# From MSAI_Text_Generation on laptop
+rsync -av data/kiosk_synthetic/raw.jsonl \
+  quest:~/MSAI_Text_Generation/data/kiosk_synthetic/
+
+rsync -av data/processed/kiosk_train.jsonl \
+      data/processed/kiosk_val.jsonl \
+      data/processed/kiosk_holdout.jsonl \
+  quest:~/MSAI_Text_Generation/data/processed/
+
+rsync -av tokenizer/ quest:~/MSAI_Text_Generation/tokenizer/
+```
+
+On Quest (login node), if you only uploaded `raw.jsonl`:
+
+```bash
+cd ~/MSAI_Text_Generation
+python scripts/preprocess.py --skip-tokenizer   # split only; then train tokenizer OR rsync tokenizer from laptop
+python scripts/train_tokenizer.py             # if tokenizer not copied
+python scripts/train.py --config configs/train_quest.yaml
+```
+
+**Default (`configs/train.yaml`, `configs/train_quest.yaml`):** `mix_weights.kiosk: 1.0` — Quest does not need external corpora.
+
+### Optional mixed training (90% kiosk + 5% xLAM + 5% Glaive)
+
+Use after a kiosk-only baseline, or if JSON/answer fluency is weak:
+
+| Config | Model | Mix |
+|--------|-------|-----|
+| [`configs/train_quest_mixed.yaml`](configs/train_quest_mixed.yaml) | Quest 12L/512d | kiosk 0.9, xlam 0.05, glaive 0.05 |
+| [`configs/train_mixed.yaml`](configs/train_mixed.yaml) | Laptop 6L/256d | same mix |
+
+**Quest needs** (under `data/`, in addition to kiosk processed shards):
+
+- `data/salesforce/xlam_function_calling_60k.json`
+- `data/glaive/glaive-function-calling-v2.json`
+
+```bash
+# On Quest login node
+python scripts/preprocess.py --config configs/train_quest_mixed.yaml
+python scripts/train_tokenizer.py --config configs/train_quest_mixed.yaml
+python scripts/train.py --config configs/train_quest_mixed.yaml
+```
+
+Holdout eval is still **kiosk-only** (`kiosk_holdout.jsonl`) so you can compare fairly against the baseline.
 
 ## Setup
 
 ```bash
 pip install -r requirements.txt
+pip install torch   # if not already installed
 pip install requests python-dotenv httpx   # generate_synthetic.py only
 ```
-
-Set on laptop (or use `paths` in `configs/train.yaml`):
 
 ```bash
 export KIOSK_ROOT=/path/to/kiosk
 export KIOSK_ARCHIVE=/path/to/kiosk/Archive
 ```
 
-## Synthetic data
+## Sequence format
 
-Templates live in [`src/data/kiosk_templates.yaml`](src/data/kiosk_templates.yaml):
-
-| Scenario | Share (default) | Description |
-|----------|-----------------|-------------|
-| `single` | ~62% | One tool, balanced per action |
-| `multi_turn` | 22% | Follow-up with planner context |
-| `ambiguous` | 8% | Phrasing that could map to another tool |
-| `multi_tool` | 8% | One user message, `actions` array |
-
-Quality gates: gold facts from `ToolExecutor`, retries on empty results, name/question dedup, min answer length.
-
-**Regenerate** after template or generator changes (old `raw.jsonl` is not compatible):
-
-```bash
-python scripts/generate_synthetic.py --n 5000
+```
+<|system|> ... Available tools: [...] Rules: ...
+<|user|> When are office hours on Thursday?
+<|assistant|> {"action":"lookup_office_hours",...}
+<|tool|> {"blueprint":"office_hours","facts":[...]}
+<|assistant|> Yiji Zhang holds office hours ...
+<|eos|>
 ```
 
-Outputs: `data/kiosk_synthetic/raw.jsonl` → HPC split to `data/processed/kiosk_{train,val,holdout}.jsonl`.
+Loss is applied on **both** `<|assistant|>` spans (tool JSON + spoken answer). `max_seq_len` defaults to **1024**.
 
-Config knobs in `configs/train.yaml` under `synthetic:`.
+## Synthetic data
+
+Regenerate after template changes:
+
+```bash
+python scripts/generate_synthetic.py --n 10000
+python scripts/preprocess.py
+python scripts/train_tokenizer.py
+```
+
+Outputs: `data/kiosk_synthetic/raw.jsonl` → `data/processed/kiosk_{train,val,holdout}.jsonl`.
 
 ## Scripts
 
-| Script | Where |
-|--------|-------|
-| `generate_synthetic.py` | Laptop — raw JSONL |
-| `preprocess.py` | HPC login — split + corpora + tokenizer |
-| `train.py` | HPC GPU — training |
-| `eval.py` / `chat.py` / `kiosk_demo.py` | Inference / demo |
+| Script | Purpose |
+|--------|---------|
+| `generate_synthetic.py` | Kiosk JSONL with real `ToolExecutor` + answers |
+| `preprocess.py` | Train/val/holdout splits |
+| `train_tokenizer.py` | BPE tokenizer |
+| `train.py` | LM-only training |
+| `eval.py` | Holdout tool + answer metrics |
+| `kiosk_demo.py` | Full agent REPL |
 
-## Training outputs (gitignored)
+Legacy LoRA / action-head / hybrid scripts live under [`legacy/`](legacy/).
 
-`checkpoints/best.pt`, `metrics.csv`, `plots/curves.png`
+## Training outputs
 
-Training uses **next-token prediction** with loss only on `<|assistant|>` spans. Holdout eval uses **greedy** decoding (`temperature=0`).
-
-### Recovery after collapse (Path A / B)
-
-See [docs/QUEST_KIOSK_RECOVERY.md](docs/QUEST_KIOSK_RECOVERY.md) for kiosk-only fine-tune, eval gates, and LoRA escalation.
-
-### Quest interactive training
+`checkpoints/best.pt`, `metrics.csv`, `plots/curves.png`, `holdout_failures_epoch*.jsonl`
 
 ```bash
-module load mamba/24.3.0 && conda activate genai
-cd ~/MSAI_Text_Generation
-
-python scripts/preprocess.py
-python scripts/debug_labels.py
-
-# Honest baseline (optional, before retrain)
-python scripts/eval.py --checkpoint checkpoints/best.pt --device cuda
-
-# Main retrain (30 epochs, 12L/512d)
-python scripts/train.py --config configs/train_quest.yaml
-
-# Resume after interrupt
-python scripts/train.py --config configs/train_quest.yaml --resume checkpoints/last.pt
-
-# Optional kiosk-only fine-tune (5 epochs)
-python scripts/train.py --config configs/train_quest_kiosk_ft.yaml --resume checkpoints/last.pt
-
-# Monitor / debug
-python scripts/debug_lm_output.py --checkpoint checkpoints/last.pt --device cuda --n 5 --args-check
+python scripts/train.py --config configs/train.yaml --resume checkpoints/last.pt
+python scripts/eval.py --checkpoint checkpoints/best.pt --device auto
 ```
-
-### Windows demo (after copying `checkpoints/best.pt` + `tokenizer/`)
-
-```powershell
-python scripts/kiosk_demo.py --checkpoint checkpoints/best.pt --device cuda
-```
-
-Healthy curves: gradual loss decrease, `holdout_lm_json_valid` and `holdout_args_match` rising in `checkpoints/metrics.csv`. See `checkpoints/holdout_failures_epoch*.jsonl` for sample errors.

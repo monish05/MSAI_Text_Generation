@@ -18,11 +18,12 @@ from train_tokenizer import train_tokenizer  # noqa: E402
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Preprocess on HPC (split synthetic, corpora, tokenizer).")
+    parser.add_argument("--config", type=Path, default=None, help="Config YAML (sets mix_weights, converter_limits)")
     parser.add_argument("--skip-kiosk-split", action="store_true", help="Skip kiosk raw -> processed split")
     parser.add_argument("--skip-tokenizer", action="store_true")
     args = parser.parse_args()
 
-    cfg = load_config()
+    cfg = load_config(args.config)
     raw_path = KIOSK_SYNTHETIC_RAW
 
     n_schemas = export_schemas()
@@ -42,10 +43,11 @@ def main() -> None:
     if not args.skip_tokenizer:
         train_tokenizer(cfg)
 
+    cfg_hint = f" --config {args.config}" if args.config else ""
     print("Done. Next steps (Quest GPU interactive):")
     print("  python scripts/debug_labels.py")
     print("  python scripts/eval.py --checkpoint checkpoints/best.pt --device cuda")
-    print("  python scripts/train.py --config configs/train_quest.yaml")
+    print(f"  python scripts/train.py{cfg_hint or ' --config configs/train_quest.yaml'}")
 
 
 if __name__ == "__main__":

@@ -1,10 +1,9 @@
 #!/usr/bin/env python3
-"""Train decoder-only transformer on mixed JSONL shards."""
+"""Train vanilla decoder-only LM on kiosk agent JSONL shards."""
 
 from __future__ import annotations
 
 import argparse
-import json
 import math
 import sys
 from functools import partial
@@ -21,8 +20,6 @@ init()
 from src.paths import PROCESSED, ROOT, load_config, shard_paths  # noqa: E402
 
 from src.model import DecoderOnlyTransformer, ModelConfig  # noqa: E402
-from src.data.kiosk_actions import num_action_classes  # noqa: E402
-from src.data.kiosk_schemas import SCHEMAS_PATH  # noqa: E402
 from src.training.dataset import (  # noqa: E402
     MixedDataset,
     auto_samples_per_epoch,
@@ -51,12 +48,12 @@ def main() -> None:
     pad_id = tokenizer.token_to_id("<|pad|>") or 0
     weights = cfg.get("mix_weights", {})
     mcfg_dict = cfg.get("model", {})
-    max_seq = int(mcfg_dict.get("max_seq_len", 512))
+    max_seq = int(mcfg_dict.get("max_seq_len", 1024))
     seed = int(tcfg.get("seed", 42))
-    batch_size = int(tcfg.get("batch_size", 128))
+    batch_size = int(tcfg.get("batch_size", 64))
     num_workers = int(tcfg.get("num_workers", 4))
     if sys.platform == "win32" and num_workers > 0:
-        print("Note: Windows uses num_workers=0 (multiprocessing spawn + tokenizer in dataset).")
+        print("Note: Windows uses num_workers=0.")
         num_workers = 0
     num_epochs = int(tcfg.get("num_epochs", 15))
     grad_accum = max(1, int(tcfg.get("grad_accumulation_steps", 1)))
@@ -68,13 +65,6 @@ def main() -> None:
     if samples_per_epoch <= 0:
         samples_per_epoch = auto_samples_per_epoch(train_shards)
 
-    use_compact = bool(tcfg.get("use_compact_system_in_training", False))
-    tool_schemas = json.loads(SCHEMAS_PATH.read_text(encoding="utf-8")) if use_compact else None
-    ds_kw = dict(
-        use_compact_system_kiosk=use_compact,
-        tool_schemas=tool_schemas,
-    )
-
     train_ds = MixedDataset(
         train_shards,
         weights,
@@ -82,7 +72,6 @@ def main() -> None:
         max_seq_len=max_seq,
         seed=seed,
         samples_per_epoch=samples_per_epoch,
-        **ds_kw,
     )
     val_paths = {k: v for k, v in shard_paths("val").items() if v.exists()}
     val_loader = None
@@ -94,7 +83,6 @@ def main() -> None:
             max_seq_len=max_seq,
             seed=seed + 999,
             fixed_indices=build_fixed_val_indices(val_paths, weights, val_samples, seed + 999),
-            **ds_kw,
         )
         val_loader = DataLoader(val_ds, batch_size=batch_size, shuffle=False, num_workers=num_workers, collate_fn=collate_fn)
 
@@ -109,7 +97,6 @@ def main() -> None:
             max_seq_len=max_seq,
             seed=seed + 1999,
             fixed_indices=build_fixed_val_indices(kiosk_val_paths, {"kiosk": 1.0}, min(val_samples, 2000), seed + 1999),
-            **ds_kw,
         )
         kiosk_val_loader = DataLoader(
             kiosk_val_ds,
@@ -125,8 +112,7 @@ def main() -> None:
 
     mcfg = ModelConfig.from_dict(cfg, vocab_size=tokenizer.get_vocab_size())
     mcfg.pad_token_id = pad_id
-    mcfg.num_action_classes = num_action_classes()
-    device = _resolve_device(tcfg.get("device", "cuda"))
+    device = _resolve_device(tcfg.get("device", "auto"))
 
     start_epoch = 0
     global_step = 0
@@ -140,7 +126,8 @@ def main() -> None:
             ckpt = torch.load(resume_path, map_location="cpu", weights_only=False)
         except TypeError:
             ckpt = torch.load(resume_path, map_location="cpu")
-        model.load_state_dict(ckpt["model_state"], strict=False)
+        state = ckpt["model_state"]
+        model.load_state_dict({k: v for k, v in state.items() if not k.startswith("action_head.")}, strict=False)
         start_epoch = int(ckpt.get("epoch", -1)) + 1
         global_step = int(ckpt.get("global_step", 0))
         lr = float(tcfg.get("lr", 3e-4))
@@ -150,18 +137,13 @@ def main() -> None:
             optimizer.load_state_dict(ckpt["optimizer_state"])
         resume_metrics = True
         print(f"Resuming from {resume_path} at epoch {start_epoch + 1}, global_step={global_step}")
-        if "holdout_score" in ckpt:
-            print(f"Previous best holdout_score={ckpt['holdout_score']}")
 
     print(
         f"device={device} epochs={num_epochs} start_epoch={start_epoch + 1} "
-        f"samples/epoch={samples_per_epoch} "
-        f"micro_batch={batch_size} grad_accum={grad_accum} "
+        f"samples/epoch={samples_per_epoch} micro_batch={batch_size} grad_accum={grad_accum} "
         f"effective_batch={batch_size * grad_accum} "
         f"opt_steps/epoch={math.ceil(samples_per_epoch / (batch_size * grad_accum))} "
-        f"vocab={mcfg.vocab_size} action_classes={mcfg.num_action_classes} "
-        f"action_loss_weight={mcfg.action_loss_weight} "
-        f"compact_system_kiosk={use_compact}"
+        f"vocab={mcfg.vocab_size} max_seq={mcfg.max_seq_len}"
     )
     train(
         model,

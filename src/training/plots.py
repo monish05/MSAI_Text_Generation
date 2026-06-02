@@ -67,8 +67,7 @@ def plot_training_curves(metrics_path: Path, out_dir: Path) -> Optional[Path]:
     for key, label, style in (
         ("val_token_acc", "val token acc", "-"),
         ("kiosk_val_token_acc", "kiosk val acc", "-."),
-        ("kiosk_val_action_acc", "kiosk val action acc", "--"),
-        ("holdout_action_acc", "holdout action acc", "-"),
+        ("holdout_action_match", "holdout action match", "-"),
         ("holdout_json_valid", "holdout JSON valid", ":"),
     ):
         xs, ys = _series(rows, key)
@@ -83,7 +82,8 @@ def plot_training_curves(metrics_path: Path, out_dir: Path) -> Optional[Path]:
     for key, label, style in (
         ("holdout_lm_json_valid", "holdout LM JSON valid", "-"),
         ("holdout_args_match", "holdout args match", "--"),
-        ("holdout_fallback_rate", "holdout fallback rate", "-."),
+        ("holdout_answer_nonempty", "holdout answer ok", "-."),
+        ("holdout_answer_overlap", "holdout answer overlap", ":"),
     ):
         xs, ys = _series(rows, key)
         if xs:
@@ -95,7 +95,7 @@ def plot_training_curves(metrics_path: Path, out_dir: Path) -> Optional[Path]:
 
     ax = axes[1, 1]
     for key, label, style in (
-        ("holdout_action_acc", "holdout action acc", "-"),
+        ("holdout_action_match", "holdout action match", "-"),
         ("holdout_json_valid", "holdout final JSON valid", ":"),
     ):
         xs, ys = _series(rows, key)

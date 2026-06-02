@@ -25,13 +25,11 @@ METRICS_COLUMNS = [
     "val_token_acc",
     "kiosk_val_loss",
     "kiosk_val_token_acc",
-    "kiosk_val_action_acc",
-    "train_action_loss",
-    "holdout_action_acc",
+    "holdout_action_match",
     "holdout_json_valid",
     "holdout_lm_json_valid",
     "holdout_args_match",
-    "holdout_fallback_rate",
+    "holdout_answer_nonempty",
     "global_step",
 ]
 
@@ -80,9 +78,7 @@ def train(
     checkpoint_dir.mkdir(parents=True, exist_ok=True)
     metrics_path = checkpoint_dir / "metrics.csv"
     plots_dir = checkpoint_dir / "plots"
-    if resume_metrics and metrics_path.exists():
-        pass
-    else:
+    if not (resume_metrics and metrics_path.exists()):
         _init_metrics_csv(metrics_path)
 
     best_val = float("inf")
@@ -98,28 +94,18 @@ def train(
         train_ds.set_epoch(epoch)
         model.train()
         epoch_loss_sum = 0.0
-        epoch_action_loss_sum = 0.0
-        epoch_action_batches = 0
         epoch_batches = 0
 
         pbar = tqdm(train_loader, desc=f"epoch {epoch + 1}/{num_epochs}")
         optimizer.zero_grad(set_to_none=True)
         for batch_idx, batch in enumerate(pbar):
-            micro_step = batch_idx % grad_accumulation_steps
-            if micro_step == 0:
+            if batch_idx % grad_accumulation_steps == 0:
                 for pg in optimizer.param_groups:
                     pg["lr"] = lr_at(global_step)
 
             input_ids = batch["input_ids"].to(device)
             labels = batch["labels"].to(device)
-            action_labels = batch["action_label"].to(device)
-            action_anchor_idx = batch["action_anchor_idx"].to(device)
-            _, loss, action_loss = model(
-                input_ids,
-                labels,
-                action_labels=action_labels,
-                action_anchor_idx=action_anchor_idx,
-            )
+            _, loss = model(input_ids, labels)
 
             scaled_loss = loss / grad_accumulation_steps
             scaled_loss.backward()
@@ -135,33 +121,23 @@ def train(
             loss_val = loss.item()
             epoch_loss_sum += loss_val
             epoch_batches += 1
-            if action_loss is not None:
-                epoch_action_loss_sum += action_loss.item()
-                epoch_action_batches += 1
 
             if batch_idx % log_every == 0:
-                postfix = {"loss": f"{loss_val:.4f}", "lr": f"{lr_at(global_step):.2e}"}
-                if action_loss is not None:
-                    postfix["act_loss"] = f"{action_loss.item():.4f}"
-                pbar.set_postfix(postfix)
+                pbar.set_postfix({"loss": f"{loss_val:.4f}", "lr": f"{lr_at(global_step):.2e}"})
 
         train_loss = epoch_loss_sum / max(epoch_batches, 1)
-        train_action_loss = (
-            epoch_action_loss_sum / max(epoch_action_batches, 1) if epoch_action_batches else None
-        )
         val_loss: Optional[float] = None
         val_token_acc: Optional[float] = None
         kiosk_val_loss: Optional[float] = None
         kiosk_val_token_acc: Optional[float] = None
-        kiosk_val_action_acc: Optional[float] = None
-        holdout_action_acc: Optional[float] = None
+        holdout_action_match: Optional[float] = None
         holdout_json_valid: Optional[float] = None
         holdout_lm_json_valid: Optional[float] = None
         holdout_args_match: Optional[float] = None
-        holdout_fallback_rate: Optional[float] = None
+        holdout_answer_nonempty: Optional[float] = None
 
         if val_loader and (epoch + 1) % eval_every_epochs == 0:
-            val_loss, val_token_acc, _ = _eval_epoch_metrics(model, val_loader, device)
+            val_loss, val_token_acc = _eval_epoch_metrics(model, val_loader, device)
             msg = f"epoch {epoch + 1} train_loss={train_loss:.4f} val_loss={val_loss:.4f} val_token_acc={val_token_acc:.4f}"
             if val_loss < best_val:
                 best_val = val_loss
@@ -179,25 +155,12 @@ def train(
             tqdm.write(f"epoch {epoch + 1} train_loss={train_loss:.4f}")
 
         if kiosk_val_loader and (epoch + 1) % eval_every_epochs == 0:
-            kiosk_val_loss, kiosk_val_token_acc, kiosk_val_action_acc = _eval_epoch_metrics(
-                model, kiosk_val_loader, device, track_action=True
-            )
-            if kiosk_val_loss is not None and not math.isfinite(kiosk_val_loss):
+            kiosk_val_loss, kiosk_val_token_acc = _eval_epoch_metrics(model, kiosk_val_loader, device)
+            if kiosk_val_loss is not None and math.isfinite(kiosk_val_loss):
                 tqdm.write(
-                    f"epoch {epoch + 1} WARNING: kiosk_val_loss=nan — no supervised labels in kiosk val; "
-                    "pull latest src/data/format.py (_labels_from_char_prefix fix)."
-                )
-            else:
-                msg = (
                     f"epoch {epoch + 1} kiosk_val_loss={kiosk_val_loss:.4f} "
                     f"kiosk_val_token_acc={kiosk_val_token_acc:.4f}"
                 )
-                if kiosk_val_action_acc is not None:
-                    msg += f" kiosk_val_action_acc={kiosk_val_action_acc:.4f}"
-                tqdm.write(msg)
-
-        if train_action_loss is not None:
-            tqdm.write(f"epoch {epoch + 1} train_action_loss={train_action_loss:.4f}")
 
         if (
             tokenizer is not None
@@ -205,14 +168,17 @@ def train(
             and (epoch + 1) % holdout_eval_every_epochs == 0
             and HOLDOUT_PATH.exists()
         ):
-            holdout_action_acc, holdout_json_valid, holdout_lm_json_valid, holdout_args_match, holdout_fallback_rate = (
-                _run_holdout_eval(model, tokenizer, device, epoch + 1, checkpoint_dir)
-            )
+            holdout = _run_holdout_eval(model, tokenizer, device, epoch + 1, checkpoint_dir)
+            holdout_action_match = holdout["action_match_rate"]
+            holdout_json_valid = holdout["final_json_valid_rate"]
+            holdout_lm_json_valid = holdout["lm_json_valid_rate"]
+            holdout_args_match = holdout["args_match_rate"]
+            holdout_answer_nonempty = holdout.get("answer_nonempty_rate")
             holdout_score = _holdout_checkpoint_score(
                 best_checkpoint_metric,
                 holdout_lm_json_valid,
                 holdout_args_match,
-                holdout_action_acc,
+                holdout_action_match,
             )
             if holdout_score is not None and holdout_score > best_holdout_score:
                 best_holdout_score = holdout_score
@@ -246,13 +212,11 @@ def train(
             val_token_acc,
             kiosk_val_loss,
             kiosk_val_token_acc,
-            kiosk_val_action_acc,
-            train_action_loss,
-            holdout_action_acc,
+            holdout_action_match,
             holdout_json_valid,
             holdout_lm_json_valid,
             holdout_args_match,
-            holdout_fallback_rate,
+            holdout_answer_nonempty,
             global_step,
         )
 
@@ -294,7 +258,7 @@ def _run_holdout_eval(
     device: torch.device,
     epoch_num: int,
     checkpoint_dir: Path,
-) -> Tuple[Optional[float], Optional[float], Optional[float], Optional[float], Optional[float]]:
+) -> Dict[str, float]:
     from src.training.holdout_eval import evaluate_holdout
 
     holdout = evaluate_holdout(
@@ -302,22 +266,18 @@ def _run_holdout_eval(
         tokenizer,
         device,
         temperature=0.0,
-        max_new_tokens=64,
-        action_head_confidence=1.0,
-        use_hybrid=False,
+        max_new_tokens_tool=80,
+        max_new_tokens_answer=96,
         log_failures=checkpoint_dir / f"holdout_failures_epoch{epoch_num}.jsonl",
         max_log_samples=5,
     )
-    action_acc = holdout["action_match_rate"]
-    json_valid = holdout["final_json_valid_rate"]
-    lm_json_valid = holdout["lm_json_valid_rate"]
-    args_match = holdout["args_match_rate"]
-    fallback_rate = holdout["fallback_rate"]
     tqdm.write(
-        f"epoch {epoch_num} holdout action_acc={action_acc:.4f} json_valid={json_valid:.4f} "
-        f"lm_json_valid={lm_json_valid:.4f} args_match={args_match:.4f} fallback={fallback_rate:.4f}"
+        f"epoch {epoch_num} holdout action={holdout['action_match_rate']:.4f} "
+        f"json_valid={holdout['final_json_valid_rate']:.4f} "
+        f"lm_json={holdout['lm_json_valid_rate']:.4f} args={holdout['args_match_rate']:.4f} "
+        f"answer_ok={holdout.get('answer_nonempty_rate', 0):.4f}"
     )
-    return action_acc, json_valid, lm_json_valid, args_match, fallback_rate
+    return holdout
 
 
 def _save_training_curves(metrics_path: Path, plots_dir: Path) -> None:
@@ -335,32 +295,21 @@ def _eval_epoch_metrics(
     model: DecoderOnlyTransformer,
     loader: DataLoader,
     device: torch.device,
-    *,
-    track_action: bool = False,
-) -> Tuple[float, float, Optional[float]]:
+) -> Tuple[float, float]:
     model.eval()
     total_loss = 0.0
     correct = 0
     total_tokens = 0
     n_loss_batches = 0
-    action_correct = 0
-    action_total = 0
 
     for batch in loader:
         input_ids = batch["input_ids"].to(device)
         labels = batch["labels"].to(device)
-        action_labels = batch["action_label"].to(device)
-        action_anchor_idx = batch["action_anchor_idx"].to(device)
-        logits, loss, _ = model(
-            input_ids,
-            labels,
-            action_labels=action_labels,
-            action_anchor_idx=action_anchor_idx,
-        )
+        logits, loss = model(input_ids, labels)
 
         mask = labels != -100
         n_supervised = mask.sum().item()
-        if n_supervised == 0 and not track_action:
+        if n_supervised == 0:
             continue
 
         if loss is not None:
@@ -369,26 +318,14 @@ def _eval_epoch_metrics(
                 total_loss += loss_val
                 n_loss_batches += 1
 
-        if n_supervised > 0:
-            pred = logits.argmax(dim=-1)
-            correct += (pred[mask] == labels[mask]).sum().item()
-            total_tokens += n_supervised
-
-        if track_action:
-            valid = (action_labels >= 0) & (action_anchor_idx >= 0)
-            if valid.any():
-                batch_idx = valid.nonzero(as_tuple=True)[0]
-                anchors = action_anchor_idx[batch_idx]
-                hidden_logits = model.predict_action_logits(input_ids, anchors)
-                pred_action = hidden_logits.argmax(dim=-1)
-                action_correct += (pred_action == action_labels[batch_idx]).sum().item()
-                action_total += batch_idx.numel()
+        pred = logits.argmax(dim=-1)
+        correct += (pred[mask] == labels[mask]).sum().item()
+        total_tokens += n_supervised
 
     model.train()
     avg_loss = total_loss / max(n_loss_batches, 1) if n_loss_batches else float("nan")
     token_acc = correct / max(total_tokens, 1)
-    action_acc = action_correct / max(action_total, 1) if action_total else None
-    return avg_loss, token_acc, action_acc
+    return avg_loss, token_acc
 
 
 def _save_checkpoint(
@@ -432,13 +369,11 @@ def _append_metrics(
     val_token_acc: Optional[float],
     kiosk_val_loss: Optional[float],
     kiosk_val_token_acc: Optional[float],
-    kiosk_val_action_acc: Optional[float],
-    train_action_loss: Optional[float],
     holdout_action_acc: Optional[float],
     holdout_json_valid: Optional[float],
     holdout_lm_json_valid: Optional[float],
     holdout_args_match: Optional[float],
-    holdout_fallback_rate: Optional[float],
+    holdout_answer_nonempty: Optional[float],
     global_step: int,
 ) -> None:
     with open(path, "a", newline="", encoding="utf-8") as f:
@@ -450,13 +385,11 @@ def _append_metrics(
                 val_token_acc if val_token_acc is not None else "",
                 kiosk_val_loss if kiosk_val_loss is not None else "",
                 kiosk_val_token_acc if kiosk_val_token_acc is not None else "",
-                kiosk_val_action_acc if kiosk_val_action_acc is not None else "",
-                train_action_loss if train_action_loss is not None else "",
                 holdout_action_acc if holdout_action_acc is not None else "",
                 holdout_json_valid if holdout_json_valid is not None else "",
                 holdout_lm_json_valid if holdout_lm_json_valid is not None else "",
                 holdout_args_match if holdout_args_match is not None else "",
-                holdout_fallback_rate if holdout_fallback_rate is not None else "",
+                holdout_answer_nonempty if holdout_answer_nonempty is not None else "",
                 global_step,
             ]
         )

@@ -19,23 +19,29 @@ SPECIAL_TOKENS = {
     "eos": "<|eos|>",
 }
 
-SYSTEM_RULES = (
-    "You are the Northwestern CS Kiosk. "
-    "Output ONLY valid JSON for tool calls using 'action' and 'arguments' keys. "
-    "For multiple tools use an 'actions' array. "
-    "If no tool applies, use action 'noop' with arguments.message. "
-    "After a tool result, reply in one or two short spoken sentences grounded in the facts."
+SYSTEM_INTRO = "You are the Northwestern CS Kiosk assistant."
+SYSTEM_RULES_LINES = (
+    "Rules:",
+    '- To call a tool, output ONLY JSON with "action" and "arguments" keys.',
+    '- For multiple tools in one step, use an "actions" array of {"action","arguments"} objects.',
+    '- If no tool applies, use {"action":"noop","arguments":{"message":"..."}}.',
+    "- After you see a tool result, reply in one or two short spoken sentences grounded in those facts.",
 )
 
 
 def build_system_prompt(tool_schemas: List[Dict[str, Any]], available_names: Optional[List[str]] = None) -> str:
-    payload: Dict[str, Any] = {
-        "instruction": SYSTEM_RULES,
-        "tool_schemas": tool_schemas,
-    }
+    """Human-readable system block (train + inference)."""
+    tools_json = json.dumps(tool_schemas, ensure_ascii=False, indent=2)
+    lines = [
+        SYSTEM_INTRO,
+        "Available tools:",
+        tools_json,
+        *SYSTEM_RULES_LINES,
+    ]
     if available_names:
-        payload["available_names"] = available_names[:80]
-    return json.dumps(payload, ensure_ascii=False)
+        sample = available_names[:40]
+        lines.append(f"Sample names (match when possible): {', '.join(sample)}")
+    return "\n".join(lines)
 
 
 def compact_system_for_inference(
@@ -44,15 +50,18 @@ def compact_system_for_inference(
     tool_schemas: Optional[List[Dict[str, Any]]] = None,
     drop_names: bool = True,
 ) -> str:
-    """Short system JSON for generation (drop huge name lists from training rows)."""
+    """Use stored system text or rebuild from schemas (inference)."""
+    del drop_names  # names omitted in v1 synthetic by default
+    if system_blob and "Available tools:" in system_blob:
+        return system_blob.strip()
     if system_blob:
         try:
             data = json.loads(system_blob)
-            if drop_names:
-                data.pop("available_names", None)
-            return json.dumps(data, ensure_ascii=False)
+            schemas = data.get("tool_schemas") or tool_schemas or []
+            return build_system_prompt(schemas if isinstance(schemas, list) else [])
         except json.JSONDecodeError:
-            pass
+            if system_blob.strip():
+                return system_blob.strip()
     if tool_schemas is not None:
         return build_system_prompt(tool_schemas)
     return system_blob or ""
@@ -159,7 +168,7 @@ def encode_formatted_text(
     max_seq_len: int = 512,
 ) -> List[int]:
     """Same segment encoding as training (for inference prompts)."""
-    ids, _, _ = build_training_labels(text, tokenizer, max_seq_len=max_seq_len)
+    ids, _ = build_training_labels(text, tokenizer, max_seq_len=max_seq_len)
     return ids
 
 
@@ -192,47 +201,32 @@ def _truncate_supervised_window(
     input_ids: List[int],
     labels: List[int],
     max_seq_len: int,
-    action_anchor_idx: Optional[int] = None,
-) -> tuple[List[int], List[int], Optional[int]]:
+) -> tuple[List[int], List[int]]:
     """Keep the end of the sequence but never drop the first supervised assistant token."""
     if len(input_ids) <= max_seq_len:
-        return input_ids, labels, action_anchor_idx
+        return input_ids, labels
     supervised = [i for i, lb in enumerate(labels) if lb != IGNORE_LABEL]
     if not supervised:
-        start = len(input_ids) - max_seq_len
-        new_anchor = action_anchor_idx - start if action_anchor_idx is not None and action_anchor_idx >= start else None
-        return input_ids[-max_seq_len:], labels[-max_seq_len:], new_anchor
+        return input_ids[-max_seq_len:], labels[-max_seq_len:]
     first_sup = supervised[0]
     end = len(input_ids)
     start = end - max_seq_len
     if first_sup < start:
         start = first_sup
         end = min(len(input_ids), start + max_seq_len)
-    new_anchor: Optional[int] = None
-    if action_anchor_idx is not None and start <= action_anchor_idx < end:
-        new_anchor = action_anchor_idx - start
-    return input_ids[start:end], labels[start:end], new_anchor
+    return input_ids[start:end], labels[start:end]
 
 
 def build_training_labels(
     text: str,
     tokenizer: Any,
     *,
-    max_seq_len: int = 512,
-) -> tuple[list[int], list[int], Optional[int]]:
-    """Next-token labels on <|assistant|> content only.
-
-    Encodes each marker/content chunk separately (BPE-safe), then truncates
-    to max_seq_len while keeping the earliest supervised assistant token.
-
-    Returns (input_ids, labels, action_anchor_idx) where action_anchor_idx is
-    the index of the last token of the first <|assistant|> marker in the
-    truncated window, or None if no supervised assistant span exists.
-    """
+    max_seq_len: int = 1024,
+) -> tuple[list[int], list[int]]:
+    """Next-token labels on all <|assistant|> spans (tool JSON + spoken answers)."""
     parts = _MARKER_PATTERN.split(text)
     input_ids: list[int] = []
     labels: list[int] = []
-    action_anchor_idx: Optional[int] = None
     idx = 0
 
     while idx < len(parts):
@@ -253,8 +247,6 @@ def build_training_labels(
         content_ids = tokenizer.encode(content).ids if content else []
 
         if supervise and content_ids:
-            if action_anchor_idx is None:
-                action_anchor_idx = len(input_ids) + len(marker_ids) - 1
             _append_marker_and_content(
                 input_ids, labels, marker_ids, content_ids, supervise=True
             )
@@ -263,10 +255,7 @@ def build_training_labels(
             if content_ids:
                 _append_tokens(input_ids, labels, content_ids, supervise_content=False)
 
-    input_ids, labels, action_anchor_idx = _truncate_supervised_window(
-        input_ids, labels, max_seq_len, action_anchor_idx
-    )
-    return input_ids, labels, action_anchor_idx
+    return _truncate_supervised_window(input_ids, labels, max_seq_len)
 
 
 def action_to_json(action: str, arguments: Dict[str, Any]) -> str:

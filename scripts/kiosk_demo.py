@@ -6,192 +6,62 @@ from __future__ import annotations
 import argparse
 import json
 import os
-import sys
 from pathlib import Path
 
 from _bootstrap import init
 
 init()
 
-from src.data.format import compact_system_for_inference  # noqa: E402
+from src.agent.orchestrator import KioskAgent  # noqa: E402
 from src.data.kiosk_schemas import SCHEMAS_PATH  # noqa: E402
-from src.inference.generate import generate_answer, generate_tool_call, load_model_and_tokenizer  # noqa: E402
+from src.inference.generate import load_model_and_tokenizer  # noqa: E402
 from src.paths import ROOT  # noqa: E402
 
 
-def _setup_kiosk(kiosk_root: Path, archive: Path):
-    sys.path.insert(0, str(kiosk_root))
-    from backend.data import load_default_catalog
-    from backend.mcp.actions import Action, PlannerContext
-    from backend.mcp.tool_executor import ToolExecutor
-    from backend.tools import (
-        AdvisorshipBlueprint,
-        AnalysisEngine,
-        CenterBlueprint,
-        FacultyByTopicBlueprint,
-        LocationBlueprint,
-        OfficeHoursBlueprint,
-        PersonLookupBlueprint,
-        StaffSupportBlueprint,
-        UpcomingEventsBlueprint,
-    )
-
-    catalog = load_default_catalog(archive)
-    engine = AnalysisEngine(
-        catalog,
-        [
-            FacultyByTopicBlueprint(),
-            LocationBlueprint(),
-            CenterBlueprint(),
-            AdvisorshipBlueprint(),
-            StaffSupportBlueprint(),
-            UpcomingEventsBlueprint(),
-            OfficeHoursBlueprint(),
-            PersonLookupBlueprint(),
-        ],
-    )
-    try:
-        engine.refresh_events()
-    except Exception:
-        pass
-    return ToolExecutor(engine), Action, PlannerContext
-
-
-def _blueprint_to_tool_json(result) -> str:
-    payload = {
-        "facts": result.facts,
-        "notes": result.notes,
-        "blueprint": result.blueprint,
-    }
-    return json.dumps(payload, ensure_ascii=False)
-
-
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Kiosk demo REPL with real ToolExecutor.")
+    parser = argparse.ArgumentParser(description="Kiosk agent demo (vanilla LM).")
     parser.add_argument("--checkpoint", type=str, default=str(ROOT / "checkpoints" / "best.pt"))
     parser.add_argument("--device", default=None)
     parser.add_argument("--kiosk-root", type=Path, default=None, help="Path to kiosk repo (or KIOSK_ROOT env)")
-    parser.add_argument("--archive", type=Path, default=None, help="Path to kiosk Archive (default: kiosk/Archive)")
-    parser.add_argument("--hybrid", action="store_true", default=True)
-    parser.add_argument("--no-hybrid", action="store_false", dest="hybrid")
-    parser.add_argument("--action-head-confidence", type=float, default=0.5)
-    parser.add_argument(
-        "--backend",
-        choices=("scratch", "lora"),
-        default="scratch",
-    )
+    parser.add_argument("--archive", type=Path, default=None, help="Path to kiosk Archive CSVs")
+    parser.add_argument("--question", type=str, default=None, help="Single question then exit")
     args = parser.parse_args()
 
-    kiosk_root = args.kiosk_root or Path(os.environ.get("KIOSK_ROOT", ROOT.parent / "kiosk"))
-    archive = args.archive or kiosk_root / "Archive"
-    if not kiosk_root.exists():
-        print(f"Kiosk root not found: {kiosk_root} (set KIOSK_ROOT)")
-        sys.exit(1)
-    if not archive.exists():
-        print(f"Archive not found: {archive}")
-        sys.exit(1)
+    kiosk_root = args.kiosk_root or Path(os.environ.get("KIOSK_ROOT", str(ROOT.parent / "kiosk")))
+    archive = args.archive or Path(os.environ.get("KIOSK_ARCHIVE", str(kiosk_root / "Archive")))
 
     schemas = json.loads(SCHEMAS_PATH.read_text(encoding="utf-8"))
+    checkpoint = Path(args.checkpoint)
+    model, tokenizer, device = load_model_and_tokenizer(checkpoint, ROOT / "tokenizer", device=args.device)
+    agent = KioskAgent(
+        model,
+        tokenizer,
+        device,
+        tool_schemas=schemas,
+        kiosk_root=kiosk_root,
+        archive=archive,
+    )
 
-    if args.backend == "lora":
-        from src.inference.generate_hf import (
-            generate_answer_hf,
-            generate_tool_call_hf,
-            load_lora_model_and_tokenizer,
-            resolve_lora_adapter_dir,
-        )
+    def run_one(q: str) -> None:
+        result = agent.answer(q)
+        print(f"\nQ: {q}")
+        print(f"Tool: {result.action_raw}")
+        print(f"Facts channel: {result.tool_result_json[:200]}...")
+        print(f"A: {result.answer}\n")
 
-        ckpt = resolve_lora_adapter_dir(Path(args.checkpoint) if args.checkpoint else None)
-        print(f"LoRA adapter: {ckpt}")
-        model, tokenizer, device = load_lora_model_and_tokenizer(ckpt, args.device)
-        gen_tool = generate_tool_call_hf
-        gen_ans = generate_answer_hf
-    else:
-        ckpt = Path(args.checkpoint) if args.checkpoint else ROOT / "checkpoints" / "best.pt"
-        if not ckpt.exists():
-            print(f"Missing checkpoint {ckpt}")
-            sys.exit(1)
-        model, tokenizer, device = load_model_and_tokenizer(ckpt, ROOT / "tokenizer", args.device)
-        gen_tool = generate_tool_call
-        gen_ans = generate_answer
-    system_prompt = compact_system_for_inference(None, tool_schemas=schemas)
+    if args.question:
+        run_one(args.question.strip())
+        return
 
-    executor, Action, PlannerContext = _setup_kiosk(kiosk_root, archive)
-    context = PlannerContext(last_subject=None, short_history=[])
-
-    print(f"Kiosk demo ready (kiosk={kiosk_root}, hybrid={args.hybrid}). Empty line to quit.")
-
+    print("Kiosk agent demo. Empty line to quit.")
     while True:
         try:
-            question = input("\n> ").strip()
+            q = input("You> ").strip()
         except (EOFError, KeyboardInterrupt):
-            print()
             break
-        if not question:
+        if not q:
             break
-
-        if args.backend == "lora":
-            tool_call = gen_tool(
-                model,
-                tokenizer,
-                tool_schemas=schemas,
-                question=question,
-                device=device,
-                system_prompt=system_prompt,
-                use_hybrid=args.hybrid,
-                use_slot_filler=True,
-            )
-        else:
-            tool_call = gen_tool(
-                model,
-                tokenizer,
-                tool_schemas=schemas,
-                question=question,
-                system_prompt=system_prompt,
-                device=device,
-                use_hybrid=args.hybrid,
-                use_slot_filler=True,
-                action_head_confidence=args.action_head_confidence,
-            )
-        parsed = tool_call.parsed or {}
-        action_name = parsed.get("action") or tool_call.head_action or "noop"
-        arguments = parsed.get("arguments") if isinstance(parsed.get("arguments"), dict) else {}
-
-        print(f"tool JSON: {tool_call.raw_json}")
-        print(f"source: {tool_call.args_source}  fallback: {tool_call.used_fallback}")
-
-        action = Action(action_name, dict(arguments))
-        result = executor.execute(action, context)
-
-        if action_name in ("lookup_person", "lookup_location", "lookup_advisorship"):
-            name = arguments.get("name") or arguments.get("person") or arguments.get("faculty")
-            if name:
-                context.last_subject = str(name)
-
-        tool_result = _blueprint_to_tool_json(result)
-        if args.backend == "lora":
-            answer = gen_ans(
-                model,
-                tokenizer,
-                tool_schemas=schemas,
-                question=question,
-                action_json=tool_call.raw_json,
-                tool_result=tool_result,
-                device=device,
-            )
-        else:
-            answer = gen_ans(
-                model,
-                tokenizer,
-                tool_schemas=schemas,
-                question=question,
-                action_json=tool_call.raw_json,
-                tool_result=tool_result,
-                device=device,
-            )
-        context.short_history.append({"question": question, "answer": answer})
-        print(f"facts: {len(result.facts)}  notes: {result.notes[:1]}")
-        print(f"answer: {answer}")
+        run_one(q)
 
 
 if __name__ == "__main__":

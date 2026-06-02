@@ -10,24 +10,19 @@ class ModelConfig:
     n_heads: int = 4
     n_layers: int = 6
     d_ff: int = 1024
-    max_seq_len: int = 512
+    max_seq_len: int = 1024
     dropout: float = 0.1
     pad_token_id: int = 0
-    num_action_classes: int = 9
-    action_loss_weight: float = 0.2
 
     @classmethod
     def from_dict(cls, d: dict, vocab_size: int = 12000) -> "ModelConfig":
         m = d.get("model", d)
-        t = d.get("training", {})
         return cls(
             vocab_size=vocab_size,
             d_model=int(m.get("d_model", 256)),
             n_heads=int(m.get("n_heads", 4)),
             n_layers=int(m.get("n_layers", 6)),
             d_ff=int(m.get("d_ff", 1024)),
-            max_seq_len=int(m.get("max_seq_len", 512)),
+            max_seq_len=int(m.get("max_seq_len", 1024)),
             dropout=float(m.get("dropout", 0.1)),
-            num_action_classes=int(m.get("num_action_classes", 9)),
-            action_loss_weight=float(t.get("action_loss_weight", m.get("action_loss_weight", 0.2))),
         )

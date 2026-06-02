@@ -1,4 +1,4 @@
-# Kiosk-only fine-tune after train_quest.yaml (from checkpoints/last.pt)
+# Kiosk-only fine-tune after train_quest.yaml (resume from checkpoints/last.pt)
 paths:
   data_raw: data
   kiosk_synthetic: data/kiosk_synthetic
@@ -17,9 +17,8 @@ model:
   n_heads: 8
   n_layers: 12
   d_ff: 2048
-  max_seq_len: 512
+  max_seq_len: 1024
   dropout: 0.1
-  num_action_classes: 9
 
 tokenizer:
   vocab_size: 12000
@@ -38,17 +37,15 @@ training:
   grad_clip: 1.0
   eval_every_epochs: 1
   holdout_eval_every_epochs: 1
-  action_loss_weight: 0.25
   best_checkpoint_metric: holdout_composite
-  use_compact_system_in_training: true
   plot_every_epochs: 1
   log_every: 50
   device: cuda
   seed: 43
 
 synthetic:
-  n_total: 5000
-  n_holdout: 200
+  n_total: 10000
+  n_holdout: 500
   val_ratio: 0.1
   multi_turn_ratio: 0.22
   ambiguous_ratio: 0.08
@@ -61,5 +58,5 @@ synthetic:
 converter_limits:
   xlam: 0
   glaive: 0
-  toolbench: 50000
-  alpaca: 52000
+  toolbench: 0
+  alpaca: 0
