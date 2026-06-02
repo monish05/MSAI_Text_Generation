@@ -10,7 +10,7 @@ from typing import Any, Dict, List, Optional
 import torch
 from tokenizers import Tokenizer
 
-from src.data.format import build_system_prompt, compact_system_for_inference, parsed_action_name
+from src.data.format import build_inference_system_prompt, parsed_action_name
 from src.executor.kiosk_bridge import execute_parsed_action, setup_kiosk_executor
 from src.executor.parse import parse_tool_call, validate_tool_call
 from src.inference.generate import generate_answer, generate_tool_call
@@ -50,7 +50,7 @@ class KioskAgent:
         self.tokenizer = tokenizer
         self.device = device
         self.tool_schemas = tool_schemas
-        self.system_prompt = build_system_prompt(tool_schemas)
+        self.system_prompt = build_inference_system_prompt(tool_schemas)
         self._executor = None
         self._Action = None
         self._PlannerContext = None
@@ -98,16 +98,21 @@ class KioskAgent:
                 ensure_ascii=False,
             )
 
-        answer = generate_answer(
-            self.model,
-            self.tokenizer,
-            tool_schemas=self.tool_schemas,
-            question=question,
-            action_json=tool_call.raw_json,
-            tool_result=tool_json,
-            context=context,
-            device=self.device,
-        )
+        if parsed_action_name(parsed) == "noop":
+            answer = (parsed.get("arguments") or {}).get(
+                "message", "I could not produce a valid tool call."
+            )
+        else:
+            answer = generate_answer(
+                self.model,
+                self.tokenizer,
+                tool_schemas=self.tool_schemas,
+                question=question,
+                action_json=tool_call.raw_json,
+                tool_result=tool_json,
+                context=context,
+                device=self.device,
+            )
         return AgentTurnResult(
             question=question,
             action_raw=tool_call.raw_json,
@@ -118,7 +123,5 @@ class KioskAgent:
 
 
 def system_prompt_from_row(text: str, *, tool_schemas: List[dict]) -> str:
-    if "<|system|>" not in text or "<|user|>" not in text:
-        return build_system_prompt(tool_schemas)
-    blob = text.split("<|system|>", 1)[1].split("<|user|>", 1)[0].strip()
-    return compact_system_for_inference(blob, tool_schemas=tool_schemas)
+    del text
+    return build_inference_system_prompt(tool_schemas)

@@ -265,7 +265,6 @@ def _run_holdout_eval(
         model,
         tokenizer,
         device,
-        temperature=0.0,
         max_new_tokens_tool=80,
         max_new_tokens_answer=96,
         log_failures=checkpoint_dir / f"holdout_failures_epoch{epoch_num}.jsonl",

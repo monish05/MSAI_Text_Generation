@@ -9,11 +9,11 @@ from pathlib import Path
 
 from tokenizers import Tokenizer, models, normalizers, pre_tokenizers, processors, trainers
 
-from src.data.format import SPECIAL_TOKENS
 from _bootstrap import init
 
 init()
 
+from src.data.format import SPECIAL_TOKENS  # noqa: E402
 from src.paths import PROCESSED, ROOT, load_config  # noqa: E402
 OUT_DIR = ROOT / "tokenizer"
 

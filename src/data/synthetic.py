@@ -11,7 +11,13 @@ from typing import Any, Deque, Dict, List, Optional, Tuple
 
 import yaml
 
-from src.data.format import action_to_json, actions_to_json, build_system_prompt, format_training_text
+from src.data.format import (
+    action_to_json,
+    actions_to_json,
+    apply_compact_system_to_training_text,
+    build_inference_system_prompt,
+    format_training_text,
+)
 from src.data.kiosk_answer import render_answer, render_combined_answer
 from src.paths import KIOSK_SYNTHETIC_RAW, PROCESSED
 
@@ -535,9 +541,8 @@ def generate_synthetic_raw(
     slots = _load_json(SLOTS_PATH)
     prefixes = templates.get("prefixes") or [""]
     nicknames = templates.get("nicknames") or {}
-    # Omit available_names — a 10k+ system blob breaks 512-token windows (model never
-    # learns to emit {"action":...} from the user turn; holdout looks like schema soup).
-    system = build_system_prompt(schemas)
+    # Compact tool list (~300 tokens) so system+user+JSON fit in max_seq_len at train time.
+    system = build_inference_system_prompt(schemas)
     executor, Action, PlannerContext = _setup_kiosk(archive, kiosk_root)
     names = NameTracker(name_window)
     questions = QuestionTracker(window=max(120, n_total // 10))
@@ -663,6 +668,20 @@ def process_kiosk_synthetic(cfg: dict) -> Tuple[int, int, int]:
     rest = rows[n_holdout:]
     n_val = int(len(rest) * val_ratio)
     val, train = rest[:n_val], rest[n_val:]
+
+    def _compact_shard(rows_in: List[dict]) -> List[dict]:
+        out: List[dict] = []
+        for row in rows_in:
+            row = dict(row)
+            if text := row.get("text"):
+                row["text"] = apply_compact_system_to_training_text(text, tool_schemas=schemas)
+            out.append(row)
+        return out
+
+    schemas = _load_json(SCHEMAS_PATH)
+    holdout = _compact_shard(holdout)
+    val = _compact_shard(val)
+    train = _compact_shard(train)
 
     PROCESSED.mkdir(parents=True, exist_ok=True)
     _write_jsonl(PROCESSED / "kiosk_holdout.jsonl", holdout)

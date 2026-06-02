@@ -15,7 +15,7 @@ from src.data.format import (
     SPECIAL_TOKENS,
     actions_match,
     arguments_match,
-    compact_system_for_inference,
+    build_inference_system_prompt,
     parsed_action_name,
 )
 from src.inference.generate import generate_answer, generate_tool_call
@@ -115,12 +115,7 @@ def evaluate_holdout(
         expected_args = meta.get("arguments") or {}
         gold_tool = _extract_tool_result(text)
         gold_answer = _extract_gold_answer(text)
-        system_prompt = compact_system_for_inference(
-            text.split(SPECIAL_TOKENS["system"], 1)[1].split(SPECIAL_TOKENS["user"], 1)[0].strip()
-            if SPECIAL_TOKENS["system"] in text
-            else None,
-            tool_schemas=schemas,
-        )
+        system_prompt = build_inference_system_prompt(schemas)
 
         tool_result = generate_tool_call(
             model,

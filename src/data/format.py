@@ -29,6 +29,44 @@ SYSTEM_RULES_LINES = (
 )
 
 
+def _compact_tool_lines(tool_schemas: List[Dict[str, Any]]) -> List[str]:
+    """One line per tool — fits in context window at inference (train may use full JSON)."""
+    lines: List[str] = []
+    for schema in tool_schemas:
+        name = schema.get("name") or ""
+        if not name:
+            continue
+        params = schema.get("parameters") if isinstance(schema.get("parameters"), dict) else {}
+        props = params.get("properties") if isinstance(params.get("properties"), dict) else {}
+        required = set(params.get("required") or [])
+        parts: List[str] = []
+        for key in props:
+            parts.append(key if key in required else f"{key}?")
+        param_str = ", ".join(parts) if parts else ""
+        blurb = (schema.get("description") or "").strip()
+        if blurb:
+            blurb = blurb.split(".")[0][:100]
+        lines.append(f"- {name}({param_str}): {blurb}" if blurb else f"- {name}({param_str})")
+    return lines
+
+
+def build_inference_system_prompt(
+    tool_schemas: List[Dict[str, Any]],
+    available_names: Optional[List[str]] = None,
+) -> str:
+    """Compact system block for inference (tools + rules, no huge JSON dump)."""
+    lines = [
+        SYSTEM_INTRO,
+        "Available tools:",
+        *_compact_tool_lines(tool_schemas),
+        *SYSTEM_RULES_LINES,
+    ]
+    if available_names:
+        sample = available_names[:40]
+        lines.append(f"Sample names (match when possible): {', '.join(sample)}")
+    return "\n".join(lines)
+
+
 def build_system_prompt(tool_schemas: List[Dict[str, Any]], available_names: Optional[List[str]] = None) -> str:
     """Human-readable system block (train + inference)."""
     tools_json = json.dumps(tool_schemas, ensure_ascii=False, indent=2)
@@ -63,7 +101,7 @@ def compact_system_for_inference(
             if system_blob.strip():
                 return system_blob.strip()
     if tool_schemas is not None:
-        return build_system_prompt(tool_schemas)
+        return build_inference_system_prompt(tool_schemas)
     return system_blob or ""
 
 
@@ -178,9 +216,14 @@ def encode_generation_prompt(
     tokenizer: Any,
     *,
     max_seq_len: int = 512,
-    max_system_tokens: int = 180,
+    max_system_tokens: int = 0,
+    system_truncate: str = "tail",
 ) -> List[int]:
-    """Encode system+user+<|assistant|>; always keep user and assistant marker in window."""
+    """Encode system+user+<|assistant|> for inference.
+
+    Training windows (build_training_labels) drop the *start* of long sequences and keep
+    the end (rules + user + supervised assistant). Default system_truncate=\"tail\" matches that.
+    """
     suffix_ids: List[int] = []
     suffix_ids.extend(tokenizer.encode(SPECIAL_TOKENS["user"]).ids)
     suffix_ids.extend(tokenizer.encode(user).ids)
@@ -193,7 +236,10 @@ def encode_generation_prompt(
     system_ids.extend(tokenizer.encode(SPECIAL_TOKENS["system"]).ids)
     system_ids.extend(tokenizer.encode(system).ids)
     if len(system_ids) > budget:
-        system_ids = system_ids[-budget:]
+        if system_truncate == "head":
+            system_ids = system_ids[:budget]
+        else:
+            system_ids = system_ids[-budget:]
     return system_ids + suffix_ids
 
 

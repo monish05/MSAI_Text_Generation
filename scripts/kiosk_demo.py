@@ -43,9 +43,21 @@ def main() -> None:
     )
 
     def run_one(q: str) -> None:
+        from src.inference.generate import generate_tool_call
+
+        tool_call = generate_tool_call(
+            model,
+            tokenizer,
+            tool_schemas=schemas,
+            question=q,
+            system_prompt=agent.system_prompt,
+            device=device,
+        )
         result = agent.answer(q)
         print(f"\nQ: {q}")
         print(f"Tool: {result.action_raw}")
+        if tool_call.lm_text and result.action_parsed and result.action_parsed.get("action") == "noop":
+            print(f"LM raw (unparsed): {tool_call.lm_text[:300]!r}")
         print(f"Facts channel: {result.tool_result_json[:200]}...")
         print(f"A: {result.answer}\n")
 

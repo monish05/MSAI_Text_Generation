@@ -11,7 +11,7 @@ from tokenizers import Tokenizer
 
 from src.data.format import (
     SPECIAL_TOKENS,
-    build_system_prompt,
+    build_inference_system_prompt,
     encode_formatted_text,
     encode_generation_prompt,
     extract_json_from_text,
@@ -40,13 +40,28 @@ def load_model_and_tokenizer(
     raw_cfg.pop("action_loss_weight", None)
     mcfg = ModelConfig(**raw_cfg)
     tokenizer = load_tokenizer(tokenizer_dir)
-    mcfg.vocab_size = max(mcfg.vocab_size, tokenizer.get_vocab_size())
+    state = {k: v for k, v in ckpt["model_state"].items() if not k.startswith("action_head.")}
+    # Vocab size must match checkpoint weights (not the on-disk tokenizer file alone).
+    if "token_emb.weight" in state:
+        mcfg.vocab_size = int(state["token_emb.weight"].shape[0])
+    else:
+        mcfg.vocab_size = max(mcfg.vocab_size, tokenizer.get_vocab_size())
+
+    tok_vocab = tokenizer.get_vocab_size()
+    if tok_vocab != mcfg.vocab_size:
+        import warnings
+
+        warnings.warn(
+            f"Tokenizer vocab ({tok_vocab}) != checkpoint vocab ({mcfg.vocab_size}). "
+            "Use the tokenizer from the same training run as best.pt "
+            "(e.g. rsync Quest tokenizer/ next to the checkpoint).",
+            stacklevel=2,
+        )
 
     model = DecoderOnlyTransformer(mcfg)
-    state = {k: v for k, v in ckpt["model_state"].items() if not k.startswith("action_head.")}
     model.load_state_dict(state, strict=False)
 
-    if device is None:
+    if device is None or str(device).strip().lower() == "auto":
         if torch.cuda.is_available():
             dev = torch.device("cuda")
         elif getattr(torch.backends, "mps", None) and torch.backends.mps.is_available():
@@ -125,7 +140,7 @@ def generate_tool_call(
     max_new_tokens: int = 80,
     temperature: float = 0.0,
 ) -> ToolCallResult:
-    system = system_prompt or build_system_prompt(tool_schemas, available_names)
+    system = system_prompt or build_inference_system_prompt(tool_schemas, available_names)
     user = question
     if context:
         user += f"\nContext: {json.dumps(context, ensure_ascii=False)}"
@@ -170,7 +185,7 @@ def generate_answer(
     max_new_tokens: int = 128,
     temperature: float = 0.0,
 ) -> str:
-    system = build_system_prompt(tool_schemas)
+    system = build_inference_system_prompt(tool_schemas)
     user = question
     if context:
         user += f"\nContext: {json.dumps(context, ensure_ascii=False)}"
