@@ -29,8 +29,15 @@ SYSTEM_RULES_LINES = (
 )
 
 
+def _param_signature(props: Dict[str, Any], required: set[str]) -> str:
+    parts: List[str] = []
+    for key in props:
+        parts.append(key if key in required else f"{key}?")
+    return ", ".join(parts) if parts else ""
+
+
 def _compact_tool_lines(tool_schemas: List[Dict[str, Any]]) -> List[str]:
-    """One line per tool — fits in context window at inference (train may use full JSON)."""
+    """One line per tool — minimal tokens (fits 1024)."""
     lines: List[str] = []
     for schema in tool_schemas:
         name = schema.get("name") or ""
@@ -39,10 +46,7 @@ def _compact_tool_lines(tool_schemas: List[Dict[str, Any]]) -> List[str]:
         params = schema.get("parameters") if isinstance(schema.get("parameters"), dict) else {}
         props = params.get("properties") if isinstance(params.get("properties"), dict) else {}
         required = set(params.get("required") or [])
-        parts: List[str] = []
-        for key in props:
-            parts.append(key if key in required else f"{key}?")
-        param_str = ", ".join(parts) if parts else ""
+        param_str = _param_signature(props, required)
         blurb = (schema.get("description") or "").strip()
         if blurb:
             blurb = blurb.split(".")[0][:100]
@@ -50,21 +54,87 @@ def _compact_tool_lines(tool_schemas: List[Dict[str, Any]]) -> List[str]:
     return lines
 
 
-def build_inference_system_prompt(
+def _rich_tool_lines(tool_schemas: List[Dict[str, Any]]) -> List[str]:
+    """One block per tool — full descriptions + param hints (fits 2048 with user + JSON)."""
+    lines: List[str] = []
+    for schema in tool_schemas:
+        name = schema.get("name") or ""
+        if not name:
+            continue
+        params = schema.get("parameters") if isinstance(schema.get("parameters"), dict) else {}
+        props = params.get("properties") if isinstance(params.get("properties"), dict) else {}
+        required = set(params.get("required") or [])
+        param_str = _param_signature(props, required)
+        desc = (schema.get("description") or "").strip()
+        lines.append(f"- {name}({param_str}): {desc}" if desc else f"- {name}({param_str})")
+        for key, spec in props.items():
+            if not isinstance(spec, dict):
+                continue
+            hint = (spec.get("description") or "").strip()
+            if not hint:
+                continue
+            opt = "" if key in required else " (optional)"
+            lines.append(f"    {key}{opt}: {hint}")
+    return lines
+
+
+def build_kiosk_system_prompt(
     tool_schemas: List[Dict[str, Any]],
+    *,
+    style: str = "rich",
     available_names: Optional[List[str]] = None,
 ) -> str:
-    """Compact system block for inference (tools + rules, no huge JSON dump)."""
-    lines = [
-        SYSTEM_INTRO,
-        "Available tools:",
-        *_compact_tool_lines(tool_schemas),
-        *SYSTEM_RULES_LINES,
-    ]
+    """System block for train + inference.
+
+    - compact: ~310 tokens @ 8 tools (use with max_seq_len 1024)
+    - rich: ~500–700 tokens, full tool docs (recommended with max_seq_len 2048)
+    - full_json: entire TOOL_SCHEMAS JSON (~2400 tokens; only if max_seq_len >= 2048)
+    """
+    style_key = (style or "rich").strip().lower()
+    if style_key in ("full", "full_json", "json"):
+        lines = [
+            SYSTEM_INTRO,
+            "Available tools:",
+            json.dumps(tool_schemas, ensure_ascii=False, indent=2),
+            *SYSTEM_RULES_LINES,
+        ]
+    elif style_key == "compact":
+        lines = [
+            SYSTEM_INTRO,
+            "Available tools:",
+            *_compact_tool_lines(tool_schemas),
+            *SYSTEM_RULES_LINES,
+        ]
+    else:
+        lines = [
+            SYSTEM_INTRO,
+            "Available tools:",
+            *_rich_tool_lines(tool_schemas),
+            *SYSTEM_RULES_LINES,
+        ]
     if available_names:
         sample = available_names[:40]
         lines.append(f"Sample names (match when possible): {', '.join(sample)}")
     return "\n".join(lines)
+
+
+def build_inference_system_prompt(
+    tool_schemas: List[Dict[str, Any]],
+    available_names: Optional[List[str]] = None,
+    *,
+    style: str = "rich",
+) -> str:
+    """Alias for kiosk system prompt (default rich when max_seq_len allows)."""
+    return build_kiosk_system_prompt(tool_schemas, style=style, available_names=available_names)
+
+
+def system_style_from_config(cfg: dict) -> str:
+    """prompt.system_style in YAML, else rich if max_seq_len >= 1536 else compact."""
+    prompt = cfg.get("prompt") or {}
+    if style := prompt.get("system_style"):
+        return str(style)
+    max_seq = int((cfg.get("model") or {}).get("max_seq_len", 1024))
+    return "rich" if max_seq >= 1536 else "compact"
 
 
 def build_system_prompt(tool_schemas: List[Dict[str, Any]], available_names: Optional[List[str]] = None) -> str:
@@ -101,7 +171,7 @@ def compact_system_for_inference(
             if system_blob.strip():
                 return system_blob.strip()
     if tool_schemas is not None:
-        return build_inference_system_prompt(tool_schemas)
+        return build_kiosk_system_prompt(tool_schemas, style="rich")
     return system_blob or ""
 
 
@@ -109,20 +179,21 @@ def apply_compact_system_to_training_text(
     text: str,
     *,
     tool_schemas: Optional[List[Dict[str, Any]]] = None,
+    system_style: str = "rich",
 ) -> str:
-    """Replace system blob with compact inference-style system (train/serve alignment)."""
+    """Replace system blob with kiosk system prompt (train/serve alignment)."""
     if SPECIAL_TOKENS["system"] not in text or SPECIAL_TOKENS["user"] not in text:
         return text
     parts = text.split(SPECIAL_TOKENS["system"], 1)
     if len(parts) < 2:
         return text
     rest = parts[1]
-    system_blob, suffix = rest.split(SPECIAL_TOKENS["user"], 1)
-    compact = compact_system_for_inference(
-        system_blob.strip() or None,
-        tool_schemas=tool_schemas,
-    )
-    return "".join([SPECIAL_TOKENS["system"], compact, SPECIAL_TOKENS["user"], suffix])
+    _system_blob, suffix = rest.split(SPECIAL_TOKENS["user"], 1)
+    if tool_schemas is not None:
+        system_text = build_kiosk_system_prompt(tool_schemas, style=system_style)
+    else:
+        system_text = compact_system_for_inference(_system_blob.strip() or None)
+    return "".join([SPECIAL_TOKENS["system"], system_text, SPECIAL_TOKENS["user"], suffix])
 
 
 def format_training_text(

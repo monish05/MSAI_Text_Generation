@@ -20,8 +20,12 @@ model:
   n_heads: 8
   n_layers: 12
   d_ff: 2048
-  max_seq_len: 1024
+  max_seq_len: 2048
   dropout: 0.1
+
+# rich = full tool descriptions + param hints (~600 tokens); needs max_seq_len >= 1536
+prompt:
+  system_style: rich
 
 tokenizer:
   vocab_size: 12000

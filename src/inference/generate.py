@@ -11,13 +11,17 @@ from tokenizers import Tokenizer
 
 from src.data.format import (
     SPECIAL_TOKENS,
-    build_inference_system_prompt,
+    build_kiosk_system_prompt,
     encode_formatted_text,
     encode_generation_prompt,
     extract_json_from_text,
     parse_action_json,
     parsed_action_name,
 )
+
+
+def _system_style_for_model(model: DecoderOnlyTransformer) -> str:
+    return "rich" if getattr(model.cfg, "max_seq_len", 1024) >= 1536 else "compact"
 from src.inference.types import ToolCallResult
 from src.model import DecoderOnlyTransformer, ModelConfig
 
@@ -140,7 +144,8 @@ def generate_tool_call(
     max_new_tokens: int = 80,
     temperature: float = 0.0,
 ) -> ToolCallResult:
-    system = system_prompt or build_inference_system_prompt(tool_schemas, available_names)
+    style = _system_style_for_model(model)
+    system = system_prompt or build_kiosk_system_prompt(tool_schemas, available_names, style=style)
     user = question
     if context:
         user += f"\nContext: {json.dumps(context, ensure_ascii=False)}"
@@ -185,7 +190,7 @@ def generate_answer(
     max_new_tokens: int = 128,
     temperature: float = 0.0,
 ) -> str:
-    system = build_inference_system_prompt(tool_schemas)
+    system = build_kiosk_system_prompt(tool_schemas, style=_system_style_for_model(model))
     user = question
     if context:
         user += f"\nContext: {json.dumps(context, ensure_ascii=False)}"

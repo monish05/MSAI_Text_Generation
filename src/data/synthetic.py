@@ -15,8 +15,9 @@ from src.data.format import (
     action_to_json,
     actions_to_json,
     apply_compact_system_to_training_text,
-    build_inference_system_prompt,
+    build_kiosk_system_prompt,
     format_training_text,
+    system_style_from_config,
 )
 from src.data.kiosk_answer import render_answer, render_combined_answer
 from src.paths import KIOSK_SYNTHETIC_RAW, PROCESSED
@@ -531,6 +532,7 @@ def generate_synthetic_raw(
     name_window: int = 40,
     prefix_prob: float = 0.12,
     out_path: Optional[Path] = None,
+    system_style: str = "rich",
 ) -> Tuple[int, Path, dict]:
     if kiosk_root is None:
         raise FileNotFoundError("kiosk_root is required for synthetic generation.")
@@ -542,8 +544,7 @@ def generate_synthetic_raw(
     slots = _load_json(SLOTS_PATH)
     prefixes = templates.get("prefixes") or [""]
     nicknames = templates.get("nicknames") or {}
-    # Compact tool list (~300 tokens) so system+user+JSON fit in max_seq_len at train time.
-    system = build_inference_system_prompt(schemas)
+    system = build_kiosk_system_prompt(schemas, style=system_style)
     executor, Action, PlannerContext = _setup_kiosk(archive, kiosk_root)
     names = NameTracker(name_window)
     questions = QuestionTracker(window=max(120, n_total // 10))
@@ -675,7 +676,9 @@ def process_kiosk_synthetic(cfg: dict) -> Tuple[int, int, int]:
         for row in rows_in:
             row = dict(row)
             if text := row.get("text"):
-                row["text"] = apply_compact_system_to_training_text(text, tool_schemas=schemas)
+                row["text"] = apply_compact_system_to_training_text(
+                    text, tool_schemas=schemas, system_style=system_style_from_config(cfg)
+                )
             out.append(row)
         return out
 

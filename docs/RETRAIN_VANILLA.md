@@ -7,8 +7,9 @@ Use this after a run with ~15% action match and CS-211-style mode collapse.
 - **`ACTION_WEIGHTS`** — more `lookup_person` / `lookup_location`, less `lookup_office_hours` / `noop`
 - **`best_checkpoint_metric: holdout_action_acc`** — `best.pt` = best routing, not best JSON
 - **`holdout_composite`** — now weights action (70%), not JSON-only
-- **`configs/train_retrain.yaml`** — recommended Quest config (12L/512d, 25 epochs, seed 45)
-- Synthetic generation uses **compact system** prompt (fits 1024 tokens)
+- **`configs/train_retrain.yaml`** — 12L/512d, **`max_seq_len: 2048`**, **`prompt.system_style: rich`**
+- **`rich` system prompt** — full tool descriptions + per-param hints from `tool_schemas.py` (~600 tokens), not truncated one-liners
+- **`compact`** still available for 1024 (`prompt.system_style: compact`)
 
 ## Step 1 — Laptop: regenerate data (required)
 

@@ -15,7 +15,7 @@ from src.data.format import (
     SPECIAL_TOKENS,
     actions_match,
     arguments_match,
-    build_inference_system_prompt,
+    build_kiosk_system_prompt,
     parsed_action_name,
 )
 from src.inference.generate import generate_answer, generate_tool_call
@@ -115,7 +115,8 @@ def evaluate_holdout(
         expected_args = meta.get("arguments") or {}
         gold_tool = _extract_tool_result(text)
         gold_answer = _extract_gold_answer(text)
-        system_prompt = build_inference_system_prompt(schemas)
+        style = "rich" if getattr(model.cfg, "max_seq_len", 1024) >= 1536 else "compact"
+        system_prompt = build_kiosk_system_prompt(schemas, style=style)
 
         tool_result = generate_tool_call(
             model,

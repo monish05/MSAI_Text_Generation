@@ -15,6 +15,7 @@ init()
 from src.data.kiosk_schemas import DEFAULT_KIOSK_ROOT, export_schemas  # noqa: E402
 from src.data.kiosk_slots import build_slots  # noqa: E402
 from src.data.synthetic import generate_synthetic_raw  # noqa: E402
+from src.data.format import system_style_from_config  # noqa: E402
 from src.paths import KIOSK_SYNTHETIC_DIR, ROOT, load_config  # noqa: E402
 
 
@@ -80,6 +81,7 @@ def main() -> None:
         max_retries=int(syn.get("max_retries", 3)),
         name_window=int(syn.get("name_repeat_window", 40)),
         prefix_prob=float(syn.get("prefix_prob", 0.12)),
+        system_style=system_style_from_config(cfg),
     )
     print(f"wrote {count} rows -> {out}")
     print(f"stats: {stats}")

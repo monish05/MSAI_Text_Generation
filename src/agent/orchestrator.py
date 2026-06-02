@@ -10,7 +10,9 @@ from typing import Any, Dict, List, Optional
 import torch
 from tokenizers import Tokenizer
 
-from src.data.format import build_inference_system_prompt, parsed_action_name
+import os
+
+from src.data.format import build_kiosk_system_prompt, parsed_action_name
 from src.executor.kiosk_bridge import execute_parsed_action, setup_kiosk_executor
 from src.executor.parse import parse_tool_call, validate_tool_call
 from src.inference.generate import generate_answer, generate_tool_call
@@ -50,7 +52,10 @@ class KioskAgent:
         self.tokenizer = tokenizer
         self.device = device
         self.tool_schemas = tool_schemas
-        self.system_prompt = build_inference_system_prompt(tool_schemas)
+        style = os.environ.get("VANILLA_SYSTEM_STYLE", "").strip() or (
+            "rich" if getattr(model, "cfg", None) and model.cfg.max_seq_len >= 1536 else "compact"
+        )
+        self.system_prompt = build_kiosk_system_prompt(tool_schemas, style=style)
         self._executor = None
         self._Action = None
         self._PlannerContext = None
@@ -122,6 +127,6 @@ class KioskAgent:
         )
 
 
-def system_prompt_from_row(text: str, *, tool_schemas: List[dict]) -> str:
+def system_prompt_from_row(text: str, *, tool_schemas: List[dict], style: str = "rich") -> str:
     del text
-    return build_inference_system_prompt(tool_schemas)
+    return build_kiosk_system_prompt(tool_schemas, style=style)
