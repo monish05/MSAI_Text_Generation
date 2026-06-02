@@ -54,11 +54,12 @@ def _kiosk_archive(cfg: dict, cli_path: Optional[Path]) -> Optional[Path]:
 
 def main() -> None:
     parser = argparse.ArgumentParser()
+    parser.add_argument("--config", type=Path, default=None, help="Config YAML (synthetic.n_total, seed, paths)")
     parser.add_argument("--n", type=int, default=None)
     parser.add_argument("--archive", type=Path, default=None)
     args = parser.parse_args()
 
-    cfg = load_config()
+    cfg = load_config(args.config)
     syn = cfg.get("synthetic", {})
     root = _kiosk_root(cfg)
     archive = _kiosk_archive(cfg, args.archive)

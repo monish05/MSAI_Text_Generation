@@ -1,46 +1,116 @@
-# Retrain vanilla kiosk LM (fix garbage / noop output)
+# Retrain vanilla kiosk LM
 
-Your current `checkpoints/best.pt` was trained with a **~1500-token tool JSON system** inside a **1024-token window**. The model rarely saw tool names or valid JSON context, and mixed xLAM/Glaive data adds junk tokens (`source`, `Classify`, etc.).
+Use this after a run with ~15% action match and CS-211-style mode collapse.
 
-**You cannot fix that checkpoint with prompt tweaks alone — retrain after reprocessing.**
+## What changed in the repo
 
-## Laptop
+- **`ACTION_WEIGHTS`** — more `lookup_person` / `lookup_location`, less `lookup_office_hours` / `noop`
+- **`best_checkpoint_metric: holdout_action_acc`** — `best.pt` = best routing, not best JSON
+- **`holdout_composite`** — now weights action (70%), not JSON-only
+- **`configs/train_retrain.yaml`** — recommended Quest config (12L/512d, 25 epochs, seed 45)
+- Synthetic generation uses **compact system** prompt (fits 1024 tokens)
+
+## Step 1 — Laptop: regenerate data (required)
+
+Weights changed → you need **new** `raw.jsonl`.
 
 ```bash
 cd MSAI_Text_Generation
-# Regenerate synthetic with compact system (if you regenerate raw data)
-# python scripts/generate_synthetic.py ...
+source ../kiosk_vanilla/.venv/bin/activate   # needs torch, pyyaml, etc.
 
-python scripts/preprocess.py --config configs/train.yaml
-# Re-splits raw JSONL and rewrites system blocks to compact tool lines
+python scripts/generate_synthetic.py --config configs/train_retrain.yaml
+# Tip: backup old raw first: mv data/kiosk_synthetic/raw.jsonl data/kiosk_synthetic/raw.jsonl.bak
+# Writes data/kiosk_synthetic/raw.jsonl (~12k examples, ~10–30 min)
 
-python scripts/train_tokenizer.py --config configs/train.yaml
+python scripts/preprocess.py --config configs/train_retrain.yaml
+# → data/processed/kiosk_{train,val,holdout}.jsonl (compact system)
+
+python scripts/train_tokenizer.py --config configs/train_retrain.yaml
+# → tokenizer/
 ```
 
-## Quest (GPU)
+## Step 2 — Sync to Quest (once)
 
 ```bash
-python scripts/train.py --config configs/train_quest.yaml
-# or kiosk-only: configs/train.yaml with mix_weights kiosk: 1.0
+export QUEST=your-quest-host   # e.g. quest.northwestern.edu
+
+rsync -av data/kiosk_synthetic/raw.jsonl $QUEST:~/MSAI_Text_Generation/data/kiosk_synthetic/
+rsync -av data/processed/ $QUEST:~/MSAI_Text_Generation/data/processed/
+rsync -av tokenizer/ $QUEST:~/MSAI_Text_Generation/tokenizer/
+rsync -av src/ scripts/ configs/ $QUEST:~/MSAI_Text_Generation/
 ```
 
-Track **`holdout_action_match_rate`** (target ≥ 0.4 before trusting the kiosk UI).
-
-## Deploy to kiosk_vanilla
+## Step 3 — Quest: train
 
 ```bash
-rsync -av checkpoints/best.pt ../kiosk_vanilla/models/best.pt
-rsync -av tokenizer/ ../kiosk_vanilla/models/tokenizer/
-```
-
-## Smoke test
+ssh $QUEST
+cd ~/MSAI_Text_Generation
 
 ```bash
-python scripts/kiosk_demo.py \
-  --checkpoint checkpoints/best.pt \
-  --kiosk-root ../kiosk \
-  --archive ../kiosk/Archive \
-  --question "Who is Larry Birnbaum?"
+cd ~/MSAI_Text_Generation
+mv checkpoints checkpoints_run11_backup   # keep old best.pt
+mkdir checkpoints
+python scripts/train.py --config configs/train_retrain.yaml
+# Or: --checkpoint-dir checkpoints_retrain
 ```
 
-Expect: `Tool: {"action":"lookup_person",...}` and a short grounded answer (not `source . source .`).
+## Step 4 — While training, watch
+
+| Metric | Target |
+|--------|--------|
+| `holdout_action_match` | **≥ 0.35** (minimum ~0.25 to try UI) |
+| `holdout_args_match` | **≥ 0.10** |
+| `holdout_lm_json_valid` | High is fine; don’t optimize for this alone |
+
+Stop early if action match flat for 5+ epochs while train loss still drops (overfitting).
+
+## Step 5 — Pull results to laptop
+
+```bash
+rsync -av $QUEST:~/MSAI_Text_Generation/checkpoints/best.pt ./checkpoints/
+rsync -av $QUEST:~/MSAI_Text_Generation/checkpoints/metrics.csv ./checkpoints/
+rsync -av $QUEST:~/MSAI_Text_Generation/checkpoints/plots/ ./checkpoints/plots/
+```
+
+## Step 6 — Smoke test (must pass before UI)
+
+```bash
+cd MSAI_Text_Generation
+source ../kiosk_vanilla/.venv/bin/activate
+
+for q in \
+  "Who is Larry Birnbaum?" \
+  "What are the office hours for CS 336?" \
+  "Where is Kevin Lynch's office?"
+do
+  python scripts/kiosk_demo.py \
+    --checkpoint checkpoints/best.pt \
+    --kiosk-root ../kiosk \
+    --archive ../kiosk/Archive \
+    --question "$q"
+  echo "---"
+done
+```
+
+**Pass:** correct tool + correct name/class + short answer (no `source . source .`, no wrong CS 211).
+
+## Step 7 — kiosk_vanilla UI
+
+Symlinks should already point at `MSAI_Text_Generation/checkpoints/best.pt` and `tokenizer/`.
+
+```bash
+cd ../kiosk_vanilla
+source .venv/bin/activate
+python -m uvicorn backend.main:app --port 8010
+```
+
+## Quick reference
+
+| Step | Where | Command |
+|------|--------|---------|
+| Regenerate | Laptop | `generate_synthetic.py` |
+| Preprocess | Laptop | `preprocess.py` |
+| Tokenizer | Laptop | `train_tokenizer.py` |
+| Train | Quest | `train.py --config configs/train_retrain.yaml` |
+| Test | Laptop | `kiosk_demo.py` |
+| UI | Laptop | `uvicorn` in `kiosk_vanilla` |

@@ -32,6 +32,12 @@ from src.training.train_loop import _resolve_device, train  # noqa: E402
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--config", type=Path, default=None, help="Training config YAML")
+    parser.add_argument(
+        "--checkpoint-dir",
+        type=Path,
+        default=None,
+        help="Where to write best.pt / last.pt (default: checkpoints/)",
+    )
     parser.add_argument("--resume", type=Path, default=None, help="Resume from last.pt checkpoint")
     parser.add_argument("--epochs", type=int, default=None)
     parser.add_argument("--samples-per-epoch", type=int, default=None)
@@ -152,7 +158,7 @@ def main() -> None:
         val_loader,
         cfg=cfg,
         device=device,
-        checkpoint_dir=ROOT / "checkpoints",
+        checkpoint_dir=(args.checkpoint_dir or ROOT / "checkpoints").resolve(),
         tokenizer=tokenizer,
         kiosk_val_loader=kiosk_val_loader,
         optimizer=optimizer,

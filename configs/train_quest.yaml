@@ -37,7 +37,7 @@ training:
   grad_clip: 1.0
   eval_every_epochs: 1
   holdout_eval_every_epochs: 1
-  best_checkpoint_metric: holdout_composite
+  best_checkpoint_metric: holdout_action_acc
   plot_every_epochs: 1
   log_every: 50
   device: cuda

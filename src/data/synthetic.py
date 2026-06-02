@@ -25,16 +25,17 @@ SCHEMAS_PATH = Path(__file__).resolve().parent / "kiosk_tool_schemas.json"
 SLOTS_PATH = Path(__file__).resolve().parent / "kiosk_slots.json"
 TEMPLATES_PATH = Path(__file__).resolve().parent / "kiosk_templates.yaml"
 
+# Rebalanced for retrain: less office-hours collapse, more person/location routing.
 ACTION_WEIGHTS = {
-    "lookup_person": 350,
-    "lookup_location": 350,
-    "lookup_office_hours": 450,
-    "lookup_faculty_topic": 220,
-    "lookup_center": 180,
-    "lookup_advisorship": 180,
-    "lookup_staff_support": 130,
-    "list_events": 130,
-    "noop": 400,
+    "lookup_person": 420,
+    "lookup_location": 420,
+    "lookup_office_hours": 280,
+    "lookup_faculty_topic": 240,
+    "lookup_center": 200,
+    "lookup_advisorship": 200,
+    "lookup_staff_support": 140,
+    "list_events": 120,
+    "noop": 280,
 }
 
 

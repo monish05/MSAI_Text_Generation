@@ -240,9 +240,12 @@ def _holdout_checkpoint_score(
     action_acc: Optional[float],
 ) -> Optional[float]:
     if metric == "holdout_composite":
-        if lm_json_valid is None or args_match is None:
+        if action_acc is None:
             return None
-        return lm_json_valid + args_match
+        json_part = lm_json_valid if lm_json_valid is not None else 0.0
+        args_part = args_match if args_match is not None else 0.0
+        # Weight routing over JSON validity (old score was json+args only → wrong best.pt).
+        return 0.15 * json_part + 0.70 * (action_acc or 0.0) + 0.15 * args_part
     if metric == "holdout_lm_json_valid":
         return lm_json_valid
     if metric == "holdout_args_match":
