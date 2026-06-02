@@ -26,10 +26,10 @@ tokenizer:
 
 training:
   num_epochs: 30
-  samples_per_epoch: 0
+  samples_per_epoch: 0          # 0 = max(100k, shard lines); set e.g. 50000 to shorten epochs
   val_samples: 5000
-  batch_size: 64
-  grad_accumulation_steps: 4
+  batch_size: 8                   # 64×1024 OOMs on 12L/512d; 8×32 ≈ same effective batch
+  grad_accumulation_steps: 32
   num_workers: 4
   lr: 2.0e-4
   weight_decay: 0.01
