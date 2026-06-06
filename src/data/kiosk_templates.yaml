@@ -58,6 +58,9 @@ lookup_location:
   - "Where's {name} based?"
   - "Mudd or Tech for {name}?"
   - "I have a meeting with {name} — which room?"
+  - "Hi, where can I find {name}?"
+  - "Can you tell me where Joshua D'Arcy is?"
+  - "Where is {name}'s office? I need the room number."
 
 lookup_office_hours:
   - "What are the office hours for {class_name}?"
@@ -235,6 +238,24 @@ multi_tool:
     actions: [lookup_advisorship, lookup_location]
 
 multi_turn:
+  - first_action: lookup_location
+    first_template: "Where can I find {name}?"
+    follow_action: lookup_location
+    follow_template: "Where can I find {name}?"
+    topic_switch: true
+    topic: professor
+  - first_action: lookup_location
+    first_template: "Hi, where can I find {name}?"
+    follow_action: lookup_location
+    follow_template: "where can I find {name}?"
+    topic_switch: true
+    topic: professor
+  - first_action: lookup_person
+    first_template: "Who is {name}?"
+    follow_action: lookup_location
+    follow_template: "Where can I find {name}?"
+    topic_switch: true
+    topic: professor
   - first_action: lookup_person
     first_template: "Tell me about {name}."
     followup: "Where is their office?"

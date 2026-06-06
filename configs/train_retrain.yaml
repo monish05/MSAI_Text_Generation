@@ -54,7 +54,7 @@ synthetic:
   n_total: 12000
   n_holdout: 500
   val_ratio: 0.1
-  multi_turn_ratio: 0.22
+  multi_turn_ratio: 0.28
   ambiguous_ratio: 0.08
   multi_tool_ratio: 0.08
   seed: 45

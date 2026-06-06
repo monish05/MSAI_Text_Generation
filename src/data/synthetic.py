@@ -155,16 +155,43 @@ def _write_jsonl(path: Path, rows: List[dict]) -> None:
             f.write(json.dumps(row, ensure_ascii=False) + "\n")
 
 
-def _sample_person(slots: dict, rng: random.Random, names: NameTracker) -> str:
+def _canonicalize_name(raw: Optional[str]) -> str:
+    if not raw:
+        return ""
+    lowered = raw.strip().lower()
+    cleaned = "".join(ch for ch in lowered if ch.isalnum() or ch.isspace())
+    return " ".join(part for part in cleaned.split() if part)
+
+
+def _apostrophe_name_pool(pool: List[str]) -> List[str]:
+    return [n for n in pool if "'" in n or "\u2019" in n]
+
+
+def _sample_person(
+    slots: dict,
+    rng: random.Random,
+    names: NameTracker,
+    *,
+    prefer_apostrophe: bool = False,
+    exclude: Optional[str] = None,
+) -> str:
     pool = slots.get("faculty_names") or slots.get("all_names") or []
+    if exclude:
+        ex = _canonicalize_name(exclude)
+        pool = [n for n in pool if _canonicalize_name(n) != ex] or pool
+    if prefer_apostrophe:
+        apostrophe_pool = _apostrophe_name_pool(pool)
+        if apostrophe_pool and rng.random() < 0.4:
+            return names.sample(apostrophe_pool, rng)
     return names.sample(pool, rng)
 
 
 def _build_arguments(action: str, slots: dict, rng: random.Random, names: NameTracker) -> Dict[str, Any]:
+    prefer_apostrophe = action in ("lookup_person", "lookup_location") and rng.random() < 0.35
     if action == "lookup_person":
-        return {"name": _sample_person(slots, rng, names)}
+        return {"name": _sample_person(slots, rng, names, prefer_apostrophe=prefer_apostrophe)}
     if action == "lookup_location":
-        return {"name": _sample_person(slots, rng, names)}
+        return {"name": _sample_person(slots, rng, names, prefer_apostrophe=prefer_apostrophe)}
     if action == "lookup_office_hours":
         args: Dict[str, Any] = (
             {"class_name": rng.choice(slots.get("course_codes") or ["CS 336"])}
@@ -418,27 +445,45 @@ def _make_multi_turn(
 
         topic = spec.get("topic", "professor")
         subject = person if topic == "professor" else args1.get("class_name") or args1.get("name") or person
-        args2: Dict[str, Any] = {"use_last_subject": True}
-        if a2 == "lookup_office_hours" and topic == "office_hours":
-            args2["class_name"] = args1.get("class_name") or class_name
-            args2["day"] = rng.choice(slots.get("days") or ["Friday"])
-        if a2 == "lookup_faculty_topic":
-            args2["topic"] = args1.get("topic") or rng.choice(slots.get("research_topics") or ["AI"])
 
-        ctx = PlannerContext(
-            topic=topic,
-            subject=subject,
-            last_subject=subject,
-            last_class=args1.get("class_name"),
-        )
-        ctx_json = json.dumps(
-            {"topic": topic, "subject": subject, "last_class": args1.get("class_name"), "last_subject": subject},
-            ensure_ascii=False,
-        )
-        q2 = f"{spec['followup']}\nContext: {ctx_json}"
-        t2 = _execute(executor, Action, PlannerContext, a2, args2, ctx)
-        if not _has_facts(t2, a2):
-            continue
+        if spec.get("topic_switch"):
+            person2 = _sample_person(slots, rng, names, prefer_apostrophe=True, exclude=person)
+            args2 = _build_arguments(a2, slots, rng, names)
+            if "{name}" in spec.get("follow_template", spec.get("followup", "")):
+                args2["name"] = person2
+            follow_tpl = spec.get("follow_template") or spec.get("followup", "")
+            q2 = _apply_prefix(_fill_template(follow_tpl, slots, args2, rng), prefixes, rng, prefix_prob)
+            ctx = PlannerContext(
+                topic=topic,
+                subject=subject,
+                last_subject=subject,
+                last_class=args1.get("class_name"),
+            )
+            t2 = _execute(executor, Action, PlannerContext, a2, args2, ctx)
+            if not _has_facts(t2, a2):
+                continue
+        else:
+            args2: Dict[str, Any] = {"use_last_subject": True}
+            if a2 == "lookup_office_hours" and topic == "office_hours":
+                args2["class_name"] = args1.get("class_name") or class_name
+                args2["day"] = rng.choice(slots.get("days") or ["Friday"])
+            if a2 == "lookup_faculty_topic":
+                args2["topic"] = args1.get("topic") or rng.choice(slots.get("research_topics") or ["AI"])
+
+            ctx = PlannerContext(
+                topic=topic,
+                subject=subject,
+                last_subject=subject,
+                last_class=args1.get("class_name"),
+            )
+            ctx_json = json.dumps(
+                {"topic": topic, "subject": subject, "last_class": args1.get("class_name"), "last_subject": subject},
+                ensure_ascii=False,
+            )
+            q2 = f"{spec['followup']}\nContext: {ctx_json}"
+            t2 = _execute(executor, Action, PlannerContext, a2, args2, ctx)
+            if not _has_facts(t2, a2):
+                continue
 
         row = {
             "id": _row_id(rng, "m2"),

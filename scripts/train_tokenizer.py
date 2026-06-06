@@ -7,7 +7,7 @@ import argparse
 import json
 from pathlib import Path
 
-from tokenizers import Tokenizer, models, normalizers, pre_tokenizers, processors, trainers
+from tokenizers import Tokenizer, decoders, models, normalizers, pre_tokenizers, processors, trainers
 
 from _bootstrap import init
 
@@ -41,6 +41,7 @@ def train_tokenizer(cfg: dict) -> None:
         show_progress=True,
     )
     tokenizer.train_from_iterator(texts, trainer=trainer)
+    tokenizer.decoder = decoders.ByteLevel()
     tokenizer.post_processor = processors.ByteLevel(trim_offsets=False)
     OUT_DIR.mkdir(parents=True, exist_ok=True)
     tokenizer.save(str(OUT_DIR / "tokenizer.json"))

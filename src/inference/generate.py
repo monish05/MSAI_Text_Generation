@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 import torch
-from tokenizers import Tokenizer
+from tokenizers import Tokenizer, decoders
 
 from src.data.format import (
     SPECIAL_TOKENS,
@@ -27,7 +27,14 @@ from src.model import DecoderOnlyTransformer, ModelConfig
 
 
 def load_tokenizer(tokenizer_dir: Path) -> Tokenizer:
-    return Tokenizer.from_file(str(tokenizer_dir / "tokenizer.json"))
+    tokenizer = Tokenizer.from_file(str(tokenizer_dir / "tokenizer.json"))
+    if tokenizer.decoder is None:
+        tokenizer.decoder = decoders.ByteLevel()
+    return tokenizer
+
+
+def decode_token_ids(tokenizer: Tokenizer, ids: List[int]) -> str:
+    return tokenizer.decode(ids)
 
 
 def load_model_and_tokenizer(
@@ -125,10 +132,10 @@ def _generate_from_ids(
         temperature=temperature,
         repetition_penalty=repetition_penalty,
         stop_on_json_close=stop_on_json_close,
-        decode_fn=lambda ids: tokenizer.decode(ids),
+        decode_fn=lambda ids: decode_token_ids(tokenizer, ids),
     )
     new_ids = out[0, prompt_len:]
-    return tokenizer.decode(new_ids.tolist())
+    return decode_token_ids(tokenizer, new_ids.tolist())
 
 
 def generate_tool_call(
@@ -145,7 +152,9 @@ def generate_tool_call(
     temperature: float = 0.0,
 ) -> ToolCallResult:
     style = _system_style_for_model(model)
-    system = system_prompt or build_kiosk_system_prompt(tool_schemas, available_names, style=style)
+    system = system_prompt or build_kiosk_system_prompt(
+        tool_schemas, style=style, available_names=available_names
+    )
     user = question
     if context:
         user += f"\nContext: {json.dumps(context, ensure_ascii=False)}"

@@ -69,9 +69,12 @@ Stop early if action match flat for 5+ epochs while train loss still drops (over
 
 ```bash
 rsync -av $QUEST:~/MSAI_Text_Generation/checkpoints/best.pt ./checkpoints/
+rsync -av $QUEST:~/MSAI_Text_Generation/tokenizer/ ./tokenizer/
 rsync -av $QUEST:~/MSAI_Text_Generation/checkpoints/metrics.csv ./checkpoints/
 rsync -av $QUEST:~/MSAI_Text_Generation/checkpoints/plots/ ./checkpoints/plots/
 ```
+
+**Important:** Always pull `best.pt` and `tokenizer/` from the **same Quest training run** (matching vocab). Do not train on laptop — Quest GPU only (`device: cuda` in `train_retrain.yaml`).
 
 ## Step 6 — Smoke test (must pass before UI)
 
