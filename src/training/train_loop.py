@@ -44,6 +44,14 @@ def _resolve_device(name: str) -> torch.device:
     return torch.device(name)
 
 
+def _move_optimizer_to_device(optimizer: torch.optim.Optimizer, device: torch.device) -> None:
+    """After model.to(device), resume checkpoints leave Adam state on CPU."""
+    for state in optimizer.state.values():
+        for key, value in state.items():
+            if isinstance(value, torch.Tensor):
+                state[key] = value.to(device)
+
+
 def train(
     model: DecoderOnlyTransformer,
     train_ds: MixedDataset,
@@ -74,6 +82,7 @@ def train(
 
     optimizer = optimizer or torch.optim.AdamW(model.parameters(), lr=lr, weight_decay=weight_decay)
     model.to(device)
+    _move_optimizer_to_device(optimizer, device)
 
     checkpoint_dir.mkdir(parents=True, exist_ok=True)
     metrics_path = checkpoint_dir / "metrics.csv"
