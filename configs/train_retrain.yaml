@@ -23,7 +23,7 @@ model:
   max_seq_len: 2048
   dropout: 0.1
 
-# rich = full tool descriptions + param hints (~600 tokens); needs max_seq_len >= 1536
+
 prompt:
   system_style: rich
 

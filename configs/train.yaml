@@ -1,4 +1,3 @@
-# Vanilla kiosk agent LM — paths relative to repo root
 paths:
   data_raw: data
   kiosk_synthetic: data/kiosk_synthetic

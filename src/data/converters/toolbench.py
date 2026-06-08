@@ -1,77 +1,88 @@
-"""Convert ToolBench v1 parquet to unified JSONL."""
-
-from __future__ import annotations
-
 import json
 import re
 from pathlib import Path
-from typing import Iterator, Optional
 
 import pyarrow.parquet as pq
-
 from ..format import action_to_json, build_system_prompt, format_training_text
 
-ACTION_RE = re.compile(r"Action:\s*([^\n]+)\s*\nAction Input:\s*(\{.*?\})", re.DOTALL | re.IGNORECASE)
+ACTION_RE = re.compile(
+    "Action:\\s*([^\\n]+)\\s*\\nAction Input:\\s*(\\{.*?\\})", re.DOTALL | re.IGNORECASE
+)
 
-
-def _parse_assistant_action(text: str) -> Optional[tuple[str, dict]]:
+def _parse_assistant_action(text):
     m = ACTION_RE.search(text)
+
     if not m:
         return None
     name = m.group(1).strip()
+
     if name.lower() == "finish":
         return None
     raw_args = m.group(2).strip()
+
     try:
         args = json.loads(raw_args)
     except json.JSONDecodeError:
         args = {}
+
     if not isinstance(args, dict):
         args = {}
-    return name, args
 
+    return (name, args)
 
-def _first_user_message(conv: dict) -> str:
+def _first_user_message(conv):
     roles = conv.get("from") or []
+
     values = conv.get("value") or []
     for role, val in zip(roles, values):
         if role == "user":
             return str(val).strip().replace("Begin!", "").strip()
+
     return ""
 
-
-def _extract_turns(conv: dict) -> Optional[tuple[str, str, str, str]]:
+def _extract_turns(conv):
     roles = conv.get("from") or []
+
     values = conv.get("value") or []
+
     user_q = _first_user_message(conv)
     if not user_q:
         return None
 
     action_json = None
     tool_result = None
+
     final_answer = None
 
     for role, val in zip(roles, values):
         val_s = str(val)
+
         if role == "assistant":
             parsed = _parse_assistant_action(val_s)
             if parsed and action_json is None:
-                name, args = parsed
+                (name, args) = parsed
+
                 action_json = action_to_json(name, args)
             elif "final_answer" in val_s.lower() or "Finish" in val_s:
-                # extract final answer from Finish action input
-                m = re.search(r'"final_answer"\s*:\s*"([^"]*)"', val_s, re.DOTALL)
+                m = re.search('"final_answer"\\s*:\\s*"([^"]*)"', val_s, re.DOTALL)
+
                 if m:
                     final_answer = m.group(1)
+
                 elif not action_json:
                     thought = val_s.split("Action:")[0].replace("Thought:", "").strip()
                     if len(thought) > 20:
                         final_answer = thought[:500]
-            elif action_json and not final_answer and "Thought:" in val_s and "Action:" not in val_s:
-                final_answer = val_s.replace("Thought:", "").strip()[:500]
-        elif role == "function" and action_json and tool_result is None:
-            tool_result = val_s[:2000]
 
+            elif (
+                action_json
+                and (not final_answer)
+                and ("Thought:" in val_s)
+                and ("Action:" not in val_s)
+            ):
+                final_answer = val_s.replace("Thought:", "").strip()[:500]
+        elif role == "function" and action_json and (tool_result is None):
+            tool_result = val_s[:2000]
     if not action_json:
         return None
     if not final_answer:
@@ -87,11 +98,11 @@ def _extract_turns(conv: dict) -> Optional[tuple[str, str, str, str]]:
         }
     ]
     system = build_system_prompt(generic_tools)
-    return user_q, system, action_json, tool_result, final_answer
+    return (user_q, system, action_json, tool_result, final_answer)
 
-
-def _iter_toolbench(data_dir: Path, limit: int = 0) -> Iterator[dict]:
+def _iter_toolbench(data_dir, limit=0):
     files = sorted(data_dir.glob("train*.parquet"))
+
     count = 0
     for fp in files:
         table = pq.read_table(fp, columns=["id", "conversations"])
@@ -100,9 +111,10 @@ def _iter_toolbench(data_dir: Path, limit: int = 0) -> Iterator[dict]:
                 return
             conv = table["conversations"][i].as_py()
             extracted = _extract_turns(conv)
+
             if not extracted:
                 continue
-            user_q, system, action_json, tool_result, final_answer = extracted
+            (user_q, system, action_json, tool_result, final_answer) = extracted
             text = format_training_text(
                 system=system,
                 user=user_q,
@@ -118,21 +130,16 @@ def _iter_toolbench(data_dir: Path, limit: int = 0) -> Iterator[dict]:
             }
             count += 1
 
-
-def convert_toolbench(
-    data_dir: Path,
-    out_train: Path,
-    out_val: Path,
-    val_ratio: float = 0.1,
-    limit: int = 0,
-) -> tuple[int, int]:
+def convert_toolbench(data_dir, out_train, out_val, val_ratio=0.1, limit=0):
     rows = list(_iter_toolbench(data_dir, limit=limit))
     n_val = max(1, int(len(rows) * val_ratio))
+
     val_rows = rows[:n_val]
     train_rows = rows[n_val:]
+
     out_train.parent.mkdir(parents=True, exist_ok=True)
     for path, part in ((out_train, train_rows), (out_val, val_rows)):
         with open(path, "w", encoding="utf-8") as f:
             for row in part:
                 f.write(json.dumps(row, ensure_ascii=False) + "\n")
-    return len(train_rows), len(val_rows)
+    return (len(train_rows), len(val_rows))

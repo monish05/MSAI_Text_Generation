@@ -61,7 +61,7 @@ python scripts/kiosk_demo.py \
 | Train (Quest GPU) | `python scripts/train.py --config configs/train_retrain.yaml` |
 | Eval | `python scripts/eval.py --checkpoint checkpoints/best.pt` |
 
-See [`docs/RETRAIN_VANILLA.md`](docs/RETRAIN_VANILLA.md) for rsync and Quest details.
+On Quest: rsync this repo to the cluster, activate the venv, then run the train step with `configs/train_retrain.yaml`. Copy `checkpoints/best.pt` and `tokenizer/` back when done.
 
 ### Chatbot GUI
 
@@ -149,7 +149,7 @@ MSAI_Text_Generation/
   scripts/                     # generate, preprocess, train, eval, demo
   src/                         # model, training, inference, synthetic data
   assets/                      # README figures
-  docs/                        # engineering journal + retrain runbook
+  docs/                        # engineering journal
   checkpoints/best.pt          # gitignored — copy from Quest after training
   tokenizer/                   # gitignored — must match best.pt vocab (4951)
   data/processed/              # gitignored — kiosk train/val/holdout JSONL

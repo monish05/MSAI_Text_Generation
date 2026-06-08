@@ -1,4 +1,3 @@
-# Laptop / smaller GPU — kiosk + light xLAM/Glaive (same mix as train_quest_mixed)
 paths:
   data_raw: data
   kiosk_synthetic: data/kiosk_synthetic
