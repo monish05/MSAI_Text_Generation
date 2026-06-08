@@ -213,6 +213,16 @@ Removed names from inference system prompt; added `enrich_action_from_question()
 
 ### Evidence (current results)
 
-The model now reliably emits a valid tool call instead of `noop` (Phase 4), but wrong-tool mistakes still occur. For *“where can I find Joshua D'Arcy?”* the UI routed to `lookup_person` (faculty profile) instead of `lookup_location` (office) — valid JSON and real facts, wrong action for the question. See [README §3](../README.md#3-results) for a correct `lookup_location` example.
+**Tool routing is the win.** Holdout action match reached 98.2% — the model reliably picks a real kiosk tool instead of the pre-retrain `noop` runs (Phase 4). Remaining routing errors are edge cases (~2%), such as choosing `lookup_person` when `lookup_location` was needed.
+
+**Correct routing and answer** — when the right tool is chosen, the pipeline can produce a clean grounded reply (often via template fallback when LM prose is degraded):
+
+![Correct tool and answer — `lookup_location` for Kristian Hammond](../assets/Correct_output.png)
+
+**Wrong tool** — valid JSON and real facts, but the wrong action for the question:
 
 ![Wrong tool — `lookup_person` for a location question](../assets/Wrong_output.png)
+
+**Text generation is still the gap.** Even with correct routing and facts, the LM’s free-text answer channel is often garbled, repetitive, or off-topic (multi-turn training bleed). `answer_quality.py` gates a template fallback so users see readable output today, but **improving end-to-end LM answer generation** — not just tool JSON — is the main piece of future work.
+
+---
