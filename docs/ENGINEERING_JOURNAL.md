@@ -22,8 +22,6 @@ flowchart LR
 - **Training data:** synthetic kiosk JSONL from real `ToolExecutor` + `render_answer()`
 - **UI:** React chat in `kiosk_vanilla/`, deployed as Hugging Face Docker Space
 
-![Deployed chatbot GUI with provenance panel](../assets/ui_kiosk.png)
-
 ---
 
 ## Metrics progression (final retrain)
@@ -128,6 +126,8 @@ Split `best.pt` / `last.pt` saving logic to avoid writing redundant full optimiz
 
 ## Phase 4 — Mode collapse (early June, checkpoints_5)
 
+![Pre-retrain vs final retrain holdout metrics](../assets/metrics_comparison.png)
+
 **Symptoms:**
 
 - `holdout_action_match` peaked at **13.2%** at epoch 13
@@ -187,6 +187,8 @@ Most errors are **topic routing** confusion, not JSON syntax:
 
 Args match (67.6%) lags action match (98.2%) — faculty-topic vs staff-support boundary is the weak spot.
 
+![Final checkpoint terminal demo](../assets/good_tool_json.png)
+
 ---
 
 ## Phase 6 — Inference quality (post-train)
@@ -228,6 +230,14 @@ Removed names from inference system prompt; added `enrich_action_from_question()
 ![Grounded answer — Kristian Hammond lookup](../assets/Correct_output.png)
 
 ![Terminal demo with final `best.pt`](../assets/good_tool_json.png)
+
+---
+
+## Chatbot GUI (extra criteria)
+
+Full React chat UI with session history and provenance panel (tool action, facts, fallback flag). Deployed as a Docker Hugging Face Space.
+
+![Chatbot GUI — Joshua D'Arcy query with provenance](../assets/ui_kiosk.png)
 
 ---
 

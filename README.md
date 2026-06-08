@@ -4,8 +4,6 @@ Decoder-only Transformer that powers a **Northwestern CS department kiosk**: the
 
 **~41M parameters** · 12 layers · d_model 512 · trained on Quest H100 · deployed via [Hugging Face Space](https://huggingface.co/spaces/monish563/kiosk_vanilla)
 
-![Chatbot GUI — Joshua D'Arcy query with provenance panel](assets/ui_kiosk.png)
-
 ---
 
 ## 1. Overview
@@ -28,8 +26,6 @@ flowchart LR
 | **Fallback** | Template answer when LM prose is degraded but routing succeeded |
 
 No separate action classifier — tool routing is ordinary causal language modeling over JSON.
-
-![Correct grounded answer after inference fixes](assets/Correct_output.png)
 
 ---
 
@@ -94,9 +90,7 @@ Live demo: [huggingface.co/spaces/monish563/kiosk_vanilla](https://huggingface.c
 
 ![Train and validation loss + accuracy](assets/training_curves.png)
 
-![Pre-retrain (13% action match) vs final retrain (98%)](assets/metrics_comparison.png)
-
-### Before vs after
+### Output
 
 | | Pre-retrain | Final |
 |---|------------:|------:|
@@ -104,25 +98,15 @@ Live demo: [huggingface.co/spaces/monish563/kiosk_vanilla](https://huggingface.c
 | Routing | noop / wrong tool | correct tool + name |
 | Answer quality | garbled / `Ġ` tokens | clean (template fallback when needed) |
 
-**UI — wrong vs correct**
-
 ![Wrong output — garbled LM text before inference fixes](assets/Wrong_output.png)
 
 ![Correct output — grounded answer (Kristian Hammond)](assets/Correct_output.png)
-
-**Terminal demo — checkpoint comparison**
-
-![Good demo — final `best.pt` checkpoint](assets/good_tool_json.png)
-
-![Bad demo — pre-retrain `checkpoints_5/best.pt`](assets/bad_tool_json.png)
 
 ---
 
 ## 4. Extra criteria pursued
 
 **Chatbot GUI** — full React chat UI with session history, provenance panel (tool action, facts, fallback flag), and local vanilla LM backend. Deployed as a Docker Hugging Face Space.
-
-![Chatbot GUI with provenance](assets/ui_kiosk.png)
 
 ---
 
@@ -137,9 +121,7 @@ Live demo: [huggingface.co/spaces/monish563/kiosk_vanilla](https://huggingface.c
 | UI routing regression | Removed inference-time entity name list from system prompt |
 | Quest resume crash | Move optimizer state to GPU after `model.to(device)` |
 
-![Routing collapse at epoch 13 (checkpoints_5)](assets/metrics_comparison.png)
-
-Full timeline with commit references: [`docs/ENGINEERING_JOURNAL.md`](docs/ENGINEERING_JOURNAL.md)
+Full timeline with figures: [`docs/ENGINEERING_JOURNAL.md`](docs/ENGINEERING_JOURNAL.md)
 
 ---
 
@@ -157,4 +139,4 @@ MSAI_Text_Generation/
   data/processed/              # gitignored — kiosk train/val/holdout JSONL
 ```
 
-Report figures are in `assets/` (training curves, holdout metrics, demo screenshots).
+Additional figures (checkpoint comparisons, terminal demos, GUI screenshots) are in [`docs/ENGINEERING_JOURNAL.md`](docs/ENGINEERING_JOURNAL.md).
