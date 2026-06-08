@@ -45,9 +45,7 @@ Source: `checkpoints/metrics.csv` (best checkpoint selected by `holdout_action_a
 
 The old run learned valid JSON shells but routed to wrong tools (office-hours collapse, CS-211 topic bleed).
 
-![Holdout metrics over final retrain epochs](../assets/holdout_metrics.png)
-
-![Side-by-side: checkpoints_5 vs final retrain](../assets/metrics_comparison.png)
+Training curves and holdout comparison: see [README §3](../README.md#3-results).
 
 ---
 
@@ -126,18 +124,16 @@ Split `best.pt` / `last.pt` saving logic to avoid writing redundant full optimiz
 
 ## Phase 4 — Mode collapse (early June, checkpoints_5)
 
-![Pre-retrain vs final retrain holdout metrics](../assets/metrics_comparison.png)
-
 **Symptoms:**
 
 - `holdout_action_match` peaked at **13.2%** at epoch 13
 - `holdout_lm_json_valid` reached **90.8%** — model learned JSON syntax without correct routing
 - Demo answers showed CS-211 / Subrahmanian repetition (wrong tool context bleed)
-- UI showed garbled LM output despite valid-looking JSON
+- Terminal demo often returned `noop` with garbled raw LM text
 
-![Mode collapse — garbled UI answer (checkpoints_5)](../assets/Wrong_output.png)
+**Previous results** — pre-retrain checkpoint (`checkpoints_5/best.pt`, ~13% action match): the model failed to emit any valid tool call — `noop` with garbled raw LM text — unlike the current model which reliably routes to a kiosk tool.
 
-![Pre-retrain terminal demo — wrong tool JSON](../assets/bad_tool_json.png)
+![Pre-retrain terminal demo — noop, no valid tool call](../assets/bad_tool_json.png)
 
 **Root causes identified:**
 
@@ -166,8 +162,6 @@ Split `best.pt` / `last.pt` saving logic to avoid writing redundant full optimiz
 
 Epoch 12 already exceeded targets (`holdout_action_match ≈ 0.98`). Training continued to epoch 15; args match still improving (0.63 → 0.68).
 
-![Train/val loss and accuracy from Quest run](../assets/training_curves.png)
-
 ### Failure: resume crash on Quest
 
 `--resume checkpoints/last.pt` failed with `cuda:0` vs `cpu` optimizer state mismatch.
@@ -186,8 +180,6 @@ Most errors are **topic routing** confusion, not JSON syntax:
 ```
 
 Args match (67.6%) lags action match (98.2%) — faculty-topic vs staff-support boundary is the weak spot.
-
-![Final checkpoint terminal demo](../assets/good_tool_json.png)
 
 ---
 
@@ -219,25 +211,17 @@ Injecting 368 entity names into the LM system prompt at inference shifted behavi
 
 Removed names from inference system prompt; added `enrich_action_from_question()` for arg repair.
 
-### Evidence
+### Evidence (current results)
 
-**Before inference fixes**
+Current UI: routing succeeds (correct action + facts in provenance) even when the LM’s spoken answer is still inconsistent — template fallback covers degraded prose. This is progress over the pre-retrain `noop` runs in Phase 4, though end-to-end LM generation is not yet reliable. See [README §3](../README.md#3-results) for a clean grounded example.
 
-![Garbled LM answer in UI](../assets/Wrong_output.png)
-
-**After inference fixes**
-
-![Grounded answer — Kristian Hammond lookup](../assets/Correct_output.png)
-
-![Terminal demo with final `best.pt`](../assets/good_tool_json.png)
+![Current UI — correct tool routing, LM answer still weak](../assets/Wrong_output.png)
 
 ---
 
 ## Chatbot GUI (extra criteria)
 
 Full React chat UI with session history and provenance panel (tool action, facts, fallback flag). Deployed as a Docker Hugging Face Space.
-
-![Chatbot GUI — Joshua D'Arcy query with provenance](../assets/ui_kiosk.png)
 
 ---
 
@@ -256,16 +240,13 @@ Full React chat UI with session history and provenance panel (tool action, facts
 
 ## Figure index
 
-| File | Description |
-|------|-------------|
-| `training_curves.png` | Train/val loss and accuracy (Quest run) |
-| `holdout_metrics.png` | Action match, JSON validity, args match vs epoch |
-| `metrics_comparison.png` | Pre-retrain (`checkpoints_5`) vs final retrain |
-| `good_tool_json.png` | `kiosk_demo.py` with final `best.pt` |
-| `bad_tool_json.png` | `kiosk_demo.py` with old `checkpoints_5/best.pt` |
-| `Correct_output.png` | UI — correct grounded answer |
-| `Wrong_output.png` | UI — garbled LM output before fixes |
-| `ui_kiosk.png` | Chatbot GUI with provenance panel |
+| File | Description | Where |
+|------|-------------|-------|
+| `training_curves.png` | Train/val loss and accuracy (Quest run) | [README §3](../README.md#3-results) |
+| `metrics_comparison.png` | Pre-retrain (`checkpoints_5`) vs final retrain | [README §3](../README.md#3-results) |
+| `Correct_output.png` | UI — grounded answer with correct tool routing | [README §3](../README.md#3-results) |
+| `Wrong_output.png` | UI — routing works, LM answer still weak | Phase 6 |
+| `bad_tool_json.png` | Pre-retrain terminal demo — noop, no valid tool call | Phase 4 |
 
 ## Key files
 
