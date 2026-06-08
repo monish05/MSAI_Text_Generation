@@ -213,49 +213,6 @@ Removed names from inference system prompt; added `enrich_action_from_question()
 
 ### Evidence (current results)
 
-Current UI: routing succeeds (correct action + facts in provenance) even when the LM’s spoken answer is still inconsistent — template fallback covers degraded prose. This is progress over the pre-retrain `noop` runs in Phase 4, though end-to-end LM generation is not yet reliable. See [README §3](../README.md#3-results) for a clean grounded example.
+The model now reliably emits a valid tool call instead of `noop` (Phase 4), but wrong-tool mistakes still occur. For *“where can I find Joshua D'Arcy?”* the UI routed to `lookup_person` (faculty profile) instead of `lookup_location` (office) — valid JSON and real facts, wrong action for the question. See [README §3](../README.md#3-results) for a correct `lookup_location` example.
 
-![Current UI — correct tool routing, LM answer still weak](../assets/Wrong_output.png)
-
----
-
-## Chatbot GUI (extra criteria)
-
-Full React chat UI with session history and provenance panel (tool action, facts, fallback flag). Deployed as a Docker Hugging Face Space.
-
----
-
-## Failure taxonomy
-
-| Category | Symptom | Primary fix |
-|----------|---------|-------------|
-| Label masking | val loss = 0 | char-prefix boundaries |
-| JSON syntax | `lookup_`, empty keys | longer training + rich prompt |
-| Wrong action | valid JSON, wrong tool | action-weight rebalance + holdout_action_acc metric |
-| Wrong args | correct tool, wrong name/topic | more synthetic templates; inference arg enrich |
-| Answer garbage | correct facts, unreadable text | ByteLevel decode + template fallback |
-| UI routing regression | `use_last_subject` on first turn | remove inference name list |
-
----
-
-## Figure index
-
-| File | Description | Where |
-|------|-------------|-------|
-| `training_curves.png` | Train/val loss and accuracy (Quest run) | [README §3](../README.md#3-results) |
-| `metrics_comparison.png` | Pre-retrain (`checkpoints_5`) vs final retrain | [README §3](../README.md#3-results) |
-| `Correct_output.png` | UI — grounded answer with correct tool routing | [README §3](../README.md#3-results) |
-| `Wrong_output.png` | UI — routing works, LM answer still weak | Phase 6 |
-| `bad_tool_json.png` | Pre-retrain terminal demo — noop, no valid tool call | Phase 4 |
-
-## Key files
-
-| File | Role |
-|------|------|
-| `configs/train_retrain.yaml` | Final training config |
-| `checkpoints/best.pt` | Deployed weights (epoch 14–15 best action acc) |
-| `checkpoints/metrics.csv` | Per-epoch metrics |
-| `src/data/synthetic.py` | Synthetic data + ACTION_WEIGHTS |
-| `src/inference/generate.py` | Tool + answer generation |
-| `src/inference/answer_quality.py` | Degraded answer detection + fallback |
-| `docs/RETRAIN_VANILLA.md` | Operational retrain runbook |
+![Wrong tool — `lookup_person` for a location question](../assets/Wrong_output.png)

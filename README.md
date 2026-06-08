@@ -94,11 +94,11 @@ Final retrain (epoch 15) improved action match from ~13% to ~98% while JSON vali
 
 ### Output
 
-The provenance panel confirms correct tool selection and grounded facts (`lookup_location`, correct args, CSV-backed facts). When the LM’s free-text answer is degraded, a template fallback produces the readable reply users see — routing is the main win over the pre-retrain checkpoint, which often emitted `noop` with no valid tool call.
+The provenance panel confirms correct tool selection and grounded facts when routing succeeds (`lookup_location`, correct args, CSV-backed facts). When the LM’s free-text answer is degraded, a template fallback produces the readable reply users see. Routing is the main win over the pre-retrain checkpoint, which often emitted `noop` with no valid tool call — though the model can still pick the wrong tool for a question (~2% holdout action errors).
 
 ![Correct output — grounded answer (Kristian Hammond)](assets/Correct_output.png)
 
-Before/after UI and pre-retrain terminal demo: [`docs/ENGINEERING_JOURNAL.md`](docs/ENGINEERING_JOURNAL.md).
+Wrong-tool example and pre-retrain terminal demo: [`docs/ENGINEERING_JOURNAL.md`](docs/ENGINEERING_JOURNAL.md).
 
 ---
 
