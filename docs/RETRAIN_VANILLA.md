@@ -89,8 +89,8 @@ for q in \
 do
   python scripts/kiosk_demo.py \
     --checkpoint checkpoints/best.pt \
-    --kiosk-root ../kiosk \
-    --archive ../kiosk/Archive \
+    --kiosk-root ../kiosk_vanilla \
+    --archive ../kiosk_vanilla/Archive \
     --question "$q"
   echo "---"
 done

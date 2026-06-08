@@ -15,6 +15,7 @@ import os
 from src.data.format import build_kiosk_system_prompt, parsed_action_name
 from src.executor.kiosk_bridge import execute_parsed_action, setup_kiosk_executor
 from src.executor.parse import parse_tool_call, validate_tool_call
+from src.inference.answer_quality import finalize_grounded_answer
 from src.inference.generate import generate_answer, generate_tool_call
 from src.model import DecoderOnlyTransformer
 
@@ -26,6 +27,8 @@ class AgentTurnResult:
     action_parsed: Optional[dict]
     tool_result_json: str
     answer: str
+    answer_source: str = "lm"  # "lm" | "template" | "noop"
+    answer_lm_raw: Optional[str] = None
 
     def as_dict(self) -> dict:
         return {
@@ -34,6 +37,8 @@ class AgentTurnResult:
             "action_parsed": self.action_parsed,
             "tool_result_json": self.tool_result_json,
             "answer": self.answer,
+            "answer_source": self.answer_source,
+            "answer_lm_raw": self.answer_lm_raw,
         }
 
 
@@ -80,7 +85,8 @@ class KioskAgent:
         )
         parsed = tool_call.parsed or parse_tool_call(tool_call.raw_json)
         allowed = [s["name"] for s in self.tool_schemas] + ["noop"]
-        if not validate_tool_call(parsed, allowed_actions=allowed):
+        lm_routing_succeeded = bool(parsed and validate_tool_call(parsed, allowed_actions=allowed))
+        if not lm_routing_succeeded:
             parsed = {"action": "noop", "arguments": {"message": "I could not produce a valid tool call."}}
             tool_call.raw_json = json.dumps(parsed, ensure_ascii=False)
 
@@ -103,12 +109,15 @@ class KioskAgent:
                 ensure_ascii=False,
             )
 
+        answer_source = "lm"
+        answer_lm_raw: Optional[str] = None
         if parsed_action_name(parsed) == "noop":
             answer = (parsed.get("arguments") or {}).get(
                 "message", "I could not produce a valid tool call."
             )
+            answer_source = "noop"
         else:
-            answer = generate_answer(
+            answer_lm_raw = generate_answer(
                 self.model,
                 self.tokenizer,
                 tool_schemas=self.tool_schemas,
@@ -118,12 +127,22 @@ class KioskAgent:
                 context=context,
                 device=self.device,
             )
+            answer, used_fallback = finalize_grounded_answer(
+                answer=answer_lm_raw,
+                action_json=tool_call.raw_json,
+                tool_result_json=tool_json,
+                lm_routing_succeeded=lm_routing_succeeded
+                and parsed_action_name(parsed) != "noop",
+            )
+            answer_source = "template" if used_fallback else "lm"
         return AgentTurnResult(
             question=question,
             action_raw=tool_call.raw_json,
             action_parsed=parsed,
             tool_result_json=tool_json,
             answer=answer,
+            answer_source=answer_source,
+            answer_lm_raw=answer_lm_raw,
         )
 
 

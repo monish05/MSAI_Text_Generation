@@ -1,133 +1,160 @@
-# MSAI_Text_Generation
+# Northwestern CS Kiosk — Vanilla Tool-Calling LM
 
-Vanilla decoder-only Transformer for the Northwestern CS Kiosk **agent loop**:
+Decoder-only Transformer that powers a **Northwestern CS department kiosk**: the model picks a tool (JSON), Python executes it against CSV archives, then the model (or a template fallback) speaks a short grounded answer.
 
-1. User question + tool schemas in context  
-2. Model generates tool JSON (`{"action":...,"arguments":...}`) via next-token prediction  
-3. Python `ToolExecutor` runs the tool and returns JSON facts  
-4. Same model generates a short grounded answer after `<|tool|>` results  
+**~41M parameters** · 12 layers · d_model 512 · trained on Quest H100 · deployed via [Hugging Face Space](https://huggingface.co/spaces/monish563/kiosk_vanilla)
 
-No action classifier head — tool choice is ordinary language modeling.
+![Chatbot GUI — Joshua D'Arcy query with provenance panel](assets/ui_kiosk.png)
 
-## Workflow
+---
 
-| Step | Where | Command |
-|------|-------|---------|
-| 1. Synthetic data | **Laptop only** (needs `kiosk/` + `Archive/`) | `python scripts/generate_synthetic.py --n 10000` |
-| 2. Preprocess + tokenizer | Laptop **or** Quest | `python scripts/preprocess.py` |
-| 3. Upload to Quest | Laptop → Quest | `rsync` processed shards + tokenizer (see below) |
-| 4. Train | Quest GPU | `python scripts/train.py --config configs/train_quest.yaml` |
-| 5. Demo | Laptop (optional) | `python scripts/kiosk_demo.py` + copy `checkpoints/best.pt` back |
+## 1. Overview
 
-You do **not** need the `kiosk/` repo on Quest. `generate_synthetic.py` runs `ToolExecutor` locally and bakes tool results + answers into each JSONL row; Quest only trains on that text.
-
-### Laptop → Quest upload
-
-After step 2 on your laptop (or run split on Quest if you only upload `raw.jsonl`):
-
-```bash
-# From MSAI_Text_Generation on laptop
-rsync -av data/kiosk_synthetic/raw.jsonl \
-  quest:~/MSAI_Text_Generation/data/kiosk_synthetic/
-
-rsync -av data/processed/kiosk_train.jsonl \
-      data/processed/kiosk_val.jsonl \
-      data/processed/kiosk_holdout.jsonl \
-  quest:~/MSAI_Text_Generation/data/processed/
-
-rsync -av tokenizer/ quest:~/MSAI_Text_Generation/tokenizer/
+```mermaid
+flowchart LR
+  Q[User question] --> P[LM planner]
+  P -->|tool JSON| E[ToolExecutor]
+  E -->|facts from CSVs| R[LM responder]
+  R -->|if degraded| T[Template fallback]
+  R --> A[Spoken answer]
+  T --> A
 ```
 
-On Quest (login node), if you only uploaded `raw.jsonl`:
+| Component | Role |
+|-----------|------|
+| **Planner** | Generates `{"action": ..., "arguments": ...}` |
+| **Executor** | Runs kiosk tools on `Archive/` faculty, hours, locations |
+| **Responder** | Generates natural-language answer from facts |
+| **Fallback** | Template answer when LM prose is degraded but routing succeeded |
+
+No separate action classifier — tool routing is ordinary causal language modeling over JSON.
+
+![Correct grounded answer after inference fixes](assets/Correct_output.png)
+
+---
+
+## 2. Installation & run
+
+### Dependencies
 
 ```bash
-cd ~/MSAI_Text_Generation
-python scripts/preprocess.py --skip-tokenizer   # split only; then train tokenizer OR rsync tokenizer from laptop
-python scripts/train_tokenizer.py             # if tokenizer not copied
-python scripts/train.py --config configs/train_quest.yaml
-```
-
-**Default (`configs/train.yaml`, `configs/train_quest.yaml`):** `mix_weights.kiosk: 1.0` — Quest does not need external corpora.
-
-### Optional mixed training (90% kiosk + 5% xLAM + 5% Glaive)
-
-Use after a kiosk-only baseline, or if JSON/answer fluency is weak:
-
-| Config | Model | Mix |
-|--------|-------|-----|
-| [`configs/train_quest_mixed.yaml`](configs/train_quest_mixed.yaml) | Quest 12L/512d | kiosk 0.9, xlam 0.05, glaive 0.05 |
-| [`configs/train_mixed.yaml`](configs/train_mixed.yaml) | Laptop 6L/256d | same mix |
-
-**Quest needs** (under `data/`, in addition to kiosk processed shards):
-
-- `data/salesforce/xlam_function_calling_60k.json`
-- `data/glaive/glaive-function-calling-v2.json`
-
-```bash
-# On Quest login node
-python scripts/preprocess.py --config configs/train_quest_mixed.yaml
-python scripts/train_tokenizer.py --config configs/train_quest_mixed.yaml
-python scripts/train.py --config configs/train_quest_mixed.yaml
-```
-
-Holdout eval is still **kiosk-only** (`kiosk_holdout.jsonl`) so you can compare fairly against the baseline.
-
-## Setup
-
-```bash
+cd MSAI_Text_Generation
+python -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
-pip install torch   # if not already installed
-pip install requests python-dotenv httpx   # generate_synthetic.py only
 ```
+
+Requires sibling repo [`kiosk_vanilla/`](../kiosk_vanilla/) (UI + Archive CSVs).
+
+### Smoke test (local)
 
 ```bash
-export KIOSK_ROOT=/path/to/kiosk
-export KIOSK_ARCHIVE=/path/to/kiosk/Archive
+python scripts/kiosk_demo.py \
+  --checkpoint checkpoints/best.pt \
+  --kiosk-root ../kiosk_vanilla \
+  --archive ../kiosk_vanilla/Archive \
+  --question "Hi, where can I find Kristian Hammond?"
 ```
 
-## Sequence format
+### Full pipeline (laptop → Quest)
 
-```
-<|system|> ... Available tools: [...] Rules: ...
-<|user|> When are office hours on Thursday?
-<|assistant|> {"action":"lookup_office_hours",...}
-<|tool|> {"blueprint":"office_hours","facts":[...]}
-<|assistant|> Yiji Zhang holds office hours ...
-<|eos|>
-```
+| Step | Command |
+|------|---------|
+| Synthetic data | `python scripts/generate_synthetic.py --config configs/train_retrain.yaml` |
+| Preprocess | `python scripts/preprocess.py --config configs/train_retrain.yaml` |
+| Tokenizer | `python scripts/train_tokenizer.py --config configs/train_retrain.yaml` |
+| Train (Quest GPU) | `python scripts/train.py --config configs/train_retrain.yaml` |
+| Eval | `python scripts/eval.py --checkpoint checkpoints/best.pt` |
 
-Loss is applied on **both** `<|assistant|>` spans (tool JSON + spoken answer). `max_seq_len` defaults to **1024**.
+See [`docs/RETRAIN_VANILLA.md`](docs/RETRAIN_VANILLA.md) for rsync and Quest details.
 
-## Synthetic data
-
-Regenerate after template changes:
+### Chatbot GUI
 
 ```bash
-python scripts/generate_synthetic.py --n 10000
-python scripts/preprocess.py
-python scripts/train_tokenizer.py
+cd ../kiosk_vanilla
+pip install -r requirements.txt
+python -m uvicorn backend.main:app --port 8010
 ```
 
-Outputs: `data/kiosk_synthetic/raw.jsonl` → `data/processed/kiosk_{train,val,holdout}.jsonl`.
+Live demo: [huggingface.co/spaces/monish563/kiosk_vanilla](https://huggingface.co/spaces/monish563/kiosk_vanilla)
 
-## Scripts
+---
 
-| Script | Purpose |
-|--------|---------|
-| `generate_synthetic.py` | Kiosk JSONL with real `ToolExecutor` + answers |
-| `preprocess.py` | Train/val/holdout splits |
-| `train_tokenizer.py` | BPE tokenizer |
-| `train.py` | LM-only training |
-| `eval.py` | Holdout tool + answer metrics |
-| `kiosk_demo.py` | Full agent REPL |
+## 3. Results
 
-Legacy LoRA / action-head / hybrid scripts live under [`legacy/`](legacy/).
+### Final holdout metrics (epoch 15)
 
-## Training outputs
+| Metric | Score |
+|--------|------:|
+| Action match | **0.982** |
+| LM JSON valid | **1.000** |
+| Args match | **0.676** |
+| Answer nonempty | 0.974 |
 
-`checkpoints/best.pt`, `metrics.csv`, `plots/curves.png`, `holdout_failures_epoch*.jsonl`
+![Holdout action / JSON / args vs epoch](assets/holdout_metrics.png)
 
-```bash
-python scripts/train.py --config configs/train.yaml --resume checkpoints/last.pt
-python scripts/eval.py --checkpoint checkpoints/best.pt --device auto
+![Train and validation loss + accuracy](assets/training_curves.png)
+
+![Pre-retrain (13% action match) vs final retrain (98%)](assets/metrics_comparison.png)
+
+### Before vs after
+
+| | Pre-retrain | Final |
+|---|------------:|------:|
+| holdout_action_match | 0.13 | **0.98** |
+| Routing | noop / wrong tool | correct tool + name |
+| Answer quality | garbled / `Ġ` tokens | clean (template fallback when needed) |
+
+**UI — wrong vs correct**
+
+![Wrong output — garbled LM text before inference fixes](assets/Wrong_output.png)
+
+![Correct output — grounded answer (Kristian Hammond)](assets/Correct_output.png)
+
+**Terminal demo — checkpoint comparison**
+
+![Good demo — final `best.pt` checkpoint](assets/good_tool_json.png)
+
+![Bad demo — pre-retrain `checkpoints_5/best.pt`](assets/bad_tool_json.png)
+
+---
+
+## 4. Extra criteria pursued
+
+**Chatbot GUI** — full React chat UI with session history, provenance panel (tool action, facts, fallback flag), and local vanilla LM backend. Deployed as a Docker Hugging Face Space.
+
+![Chatbot GUI with provenance](assets/ui_kiosk.png)
+
+---
+
+## 5. Difficulties & how we solved them
+
+| Problem | Solution |
+|---------|----------|
+| Val loss stuck at 0 | Fixed assistant span label masking (char-prefix boundaries) |
+| Action head / LoRA dead ends | Removed action head; vanilla LM JSON generation only |
+| 13% action match, valid JSON | Rich system prompt, seq_len 2048, rebalanced data, `holdout_action_acc` checkpoint metric |
+| Garbled answers (`Ġ`, repetition) | ByteLevel tokenizer decode + gated template fallback |
+| UI routing regression | Removed inference-time entity name list from system prompt |
+| Quest resume crash | Move optimizer state to GPU after `model.to(device)` |
+
+![Routing collapse at epoch 13 (checkpoints_5)](assets/metrics_comparison.png)
+
+Full timeline with commit references: [`docs/ENGINEERING_JOURNAL.md`](docs/ENGINEERING_JOURNAL.md)
+
+---
+
+## Repository layout
+
 ```
+MSAI_Text_Generation/
+  configs/train_retrain.yaml   # primary training config
+  scripts/                     # generate, preprocess, train, eval, demo
+  src/                         # model, training, inference, synthetic data
+  assets/                      # README figures
+  docs/                        # engineering journal + retrain runbook
+  checkpoints/best.pt          # gitignored — copy from Quest after training
+  tokenizer/                   # gitignored — must match best.pt vocab (4951)
+  data/processed/              # gitignored — kiosk train/val/holdout JSONL
+```
+
+Report figures are in `assets/` (training curves, holdout metrics, demo screenshots).

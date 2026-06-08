@@ -11,7 +11,7 @@ from typing import Optional
 from src.paths import ROOT
 
 SCHEMAS_PATH = ROOT / "src" / "data" / "kiosk_tool_schemas.json"
-DEFAULT_KIOSK_ROOT = ROOT.parent / "kiosk"
+DEFAULT_KIOSK_ROOT = ROOT.parent / "kiosk_vanilla"
 
 
 def _default_kiosk_root() -> Optional[Path]:

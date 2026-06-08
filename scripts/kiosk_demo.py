@@ -27,7 +27,7 @@ def main() -> None:
     parser.add_argument("--question", type=str, default=None, help="Single question then exit")
     args = parser.parse_args()
 
-    kiosk_root = args.kiosk_root or Path(os.environ.get("KIOSK_ROOT", str(ROOT.parent / "kiosk")))
+    kiosk_root = args.kiosk_root or Path(os.environ.get("KIOSK_ROOT", str(ROOT.parent / "kiosk_vanilla")))
     archive = args.archive or Path(os.environ.get("KIOSK_ARCHIVE", str(kiosk_root / "Archive")))
 
     schemas = json.loads(SCHEMAS_PATH.read_text(encoding="utf-8"))
@@ -59,6 +59,12 @@ def main() -> None:
         if tool_call.lm_text and result.action_parsed and result.action_parsed.get("action") == "noop":
             print(f"LM raw (unparsed): {tool_call.lm_text[:300]!r}")
         print(f"Facts channel: {result.tool_result_json[:200]}...")
+        print(f"Answer source: {result.answer_source}")
+        if result.answer_source == "template" and result.answer_lm_raw:
+            preview = result.answer_lm_raw
+            if len(preview) > 400:
+                preview = preview[:400] + "..."
+            print(f"LM answer (discarded): {preview}")
         print(f"A: {result.answer}\n")
 
     if args.question:

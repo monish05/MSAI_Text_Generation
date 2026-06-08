@@ -2,8 +2,8 @@
 paths:
   data_raw: data
   kiosk_synthetic: data/kiosk_synthetic
-  kiosk_repo: ../kiosk
-  kiosk_archive: ../kiosk/Archive
+  kiosk_repo: ../kiosk_vanilla
+  kiosk_archive: ../kiosk_vanilla/Archive
 
 mix_weights:
   kiosk: 1.0
