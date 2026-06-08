@@ -107,6 +107,7 @@ Live demo: [huggingface.co/spaces/monish563/kiosk_vanilla](https://huggingface.c
 ## 4. Extra criteria pursued
 
 **Chatbot GUI** — full React chat UI with session history, provenance panel (tool action, facts, fallback flag), and local vanilla LM backend. Deployed as a Docker Hugging Face Space.
+**MCP** - 
 
 ---
 
@@ -119,7 +120,6 @@ Live demo: [huggingface.co/spaces/monish563/kiosk_vanilla](https://huggingface.c
 | 13% action match, valid JSON | Rich system prompt, seq_len 2048, rebalanced data, `holdout_action_acc` checkpoint metric |
 | Garbled answers (`Ġ`, repetition) | ByteLevel tokenizer decode + gated template fallback |
 | UI routing regression | Removed inference-time entity name list from system prompt |
-| Quest resume crash | Move optimizer state to GPU after `model.to(device)` |
 
 Full timeline with figures: [`docs/ENGINEERING_JOURNAL.md`](docs/ENGINEERING_JOURNAL.md)
 
